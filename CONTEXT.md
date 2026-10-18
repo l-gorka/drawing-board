@@ -16,6 +16,7 @@ The repository contains:
 - `docs/specs/` — desired user-facing behavior and integration capabilities.
 - `docs/adr/` — durable architectural trade-offs and their rationale.
 - `docs/knowledge/` — verified, reusable solutions to recurring problems.
+- `docs/deployment.md` — Cloudflare Workers Builds setup and release steps.
 
 When sources conflict, use the glossary for terminology, the specifications
 for desired behavior, ADRs for architectural rationale, and the current issue
