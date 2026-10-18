@@ -47,11 +47,17 @@ export function BoardCanvas({ board, onDraw }: BoardCanvasProps) {
       aria-label="Board"
       onPointerDown={(event) => {
         isDrawing.current = true;
+        if (event.pointerType === "touch") {
+          event.preventDefault();
+        }
         event.currentTarget.setPointerCapture?.(event.pointerId);
         drawAtPointer(event);
       }}
       onPointerMove={(event) => {
         if (isDrawing.current) {
+          if (event.pointerType === "touch") {
+            event.preventDefault();
+          }
           drawAtPointer(event);
         }
       }}
