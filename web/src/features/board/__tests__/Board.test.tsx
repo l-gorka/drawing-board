@@ -222,6 +222,7 @@ describe("Board", () => {
     renderBoard();
 
     const canvas = await screen.findByLabelText<HTMLCanvasElement>("Board");
+    expect(canvas.className).toBe("board-canvas");
     const touchDown = createEvent.pointerDown(canvas, {
       clientX: 2 * 16 + 1,
       clientY: 3 * 16 + 1,
@@ -257,6 +258,18 @@ describe("Board", () => {
 
     expect(webSocket.send).not.toHaveBeenCalledWith(
       JSON.stringify({ type: "DRAW", x: 4, y: 3, color: "#FFFFFF" }),
+    );
+
+    const penDown = createEvent.pointerDown(canvas, {
+      clientX: 5 * 16 + 1,
+      clientY: 3 * 16 + 1,
+      pointerId: 2,
+      pointerType: "pen",
+    });
+    fireEvent(canvas, penDown);
+    expect(penDown.defaultPrevented).toBe(true);
+    expect(webSocket.send).toHaveBeenCalledWith(
+      JSON.stringify({ type: "DRAW", x: 5, y: 3, color: "#FFFFFF" }),
     );
   });
 

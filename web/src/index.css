@@ -3,6 +3,10 @@ body {
   color: #eeeeee;
 }
 
+.board-canvas {
+  touch-action: none;
+}
+
 .board-layout {
   display: flex;
   flex-direction: column;
