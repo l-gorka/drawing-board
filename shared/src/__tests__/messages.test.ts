@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { BLANK_COLOR, Palette, parseDrawMessage } from "../index";
+import {
+  BLANK_COLOR,
+  Palette,
+  parseBoardMessage,
+  parseDrawMessage,
+} from "../index";
 
 describe("Palette", () => {
   it("contains sixteen colors including the blank color", () => {
@@ -26,5 +31,15 @@ describe("parseDrawMessage", () => {
     "not json",
   ])("rejects invalid input: %s", (input) => {
     expect(parseDrawMessage(input)).toBeNull();
+  });
+});
+
+describe("parseBoardMessage", () => {
+  it("accepts a RESET message", () => {
+    expect(parseBoardMessage('{"type":"RESET"}')).toEqual({ type: "RESET" });
+  });
+
+  it("silently rejects unknown message types", () => {
+    expect(parseBoardMessage('{"type":"UNKNOWN"}')).toBeNull();
   });
 });

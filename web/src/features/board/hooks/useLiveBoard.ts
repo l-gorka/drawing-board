@@ -1,27 +1,32 @@
 import {
   type Board,
+  type BoardMessage,
+  createBlankBoard,
   type DrawMessage,
-  parseDrawMessage,
+  drawCell,
+  parseBoardMessage,
+  type ResetMessage,
 } from "@drawing-board/shared";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchBoard } from "../api/fetchBoard";
 
-function applyDraw(board: Board, draw: DrawMessage): Board {
-  return board.map((row, y) =>
-    y === draw.y
-      ? row.map((color, x) => (x === draw.x ? draw.color : color))
-      : row,
-  );
+function applyMessage(board: Board, message: BoardMessage): Board {
+  switch (message.type) {
+    case "DRAW":
+      return drawCell(board, message.x, message.y, message.color);
+    case "RESET":
+      return createBlankBoard();
+  }
 }
 
 export function useLiveBoard() {
   const [board, setBoard] = useState<Board | null>(null);
   const [webSocketStarted, setWebSocketStarted] = useState(false);
   const hydrated = useRef(false);
-  const bufferedDraws = useRef<DrawMessage[]>([]);
+  const bufferedMessages = useRef<BoardMessage[]>([]);
   const socket = useRef<WebSocket | null>(null);
-  const queuedDraws = useRef<string[]>([]);
+  const queuedMessages = useRef<string[]>([]);
 
   const { data: snapshot, isError } = useQuery({
     queryKey: ["board"],
@@ -37,25 +42,25 @@ export function useLiveBoard() {
     setWebSocketStarted(true);
 
     webSocket.addEventListener("open", () => {
-      for (const draw of queuedDraws.current) {
-        webSocket.send(draw);
+      for (const message of queuedMessages.current) {
+        webSocket.send(message);
       }
-      queuedDraws.current = [];
+      queuedMessages.current = [];
     });
 
     webSocket.addEventListener("message", (event) => {
-      const draw = parseDrawMessage(event.data);
-      if (!draw) {
+      const message = parseBoardMessage(event.data);
+      if (!message) {
         return;
       }
 
       if (!hydrated.current) {
-        bufferedDraws.current.push(draw);
+        bufferedMessages.current.push(message);
         return;
       }
 
       setBoard((currentBoard) =>
-        currentBoard ? applyDraw(currentBoard, draw) : currentBoard,
+        currentBoard ? applyMessage(currentBoard, message) : currentBoard,
       );
     });
 
@@ -72,24 +77,38 @@ export function useLiveBoard() {
       return;
     }
 
-    const hydratedBoard = bufferedDraws.current.reduce(applyDraw, snapshot);
-    bufferedDraws.current = [];
+    const hydratedBoard = bufferedMessages.current.reduce(
+      applyMessage,
+      snapshot,
+    );
+    bufferedMessages.current = [];
     hydrated.current = true;
     setBoard(hydratedBoard);
   }, [snapshot]);
 
   const draw = useCallback((message: DrawMessage) => {
     setBoard((currentBoard) =>
-      currentBoard ? applyDraw(currentBoard, message) : currentBoard,
+      currentBoard ? applyMessage(currentBoard, message) : currentBoard,
     );
 
     const serializedDraw = JSON.stringify(message);
     if (socket.current?.readyState === WebSocket.OPEN) {
       socket.current.send(serializedDraw);
     } else {
-      queuedDraws.current.push(serializedDraw);
+      queuedMessages.current.push(serializedDraw);
     }
   }, []);
 
-  return { board, draw, isError };
+  const reset = useCallback(() => {
+    const serializedReset = JSON.stringify({
+      type: "RESET",
+    } satisfies ResetMessage);
+    if (socket.current?.readyState === WebSocket.OPEN) {
+      socket.current.send(serializedReset);
+    } else {
+      queuedMessages.current.push(serializedReset);
+    }
+  }, []);
+
+  return { board, draw, reset, isError };
 }

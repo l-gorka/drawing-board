@@ -1,6 +1,13 @@
 import { BOARD_SIZE, createBlankBoard, Palette } from "@drawing-board/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Board } from "../components/Board";
 import { CANVAS_SIZE } from "../utils/drawBoard";
@@ -137,7 +144,11 @@ describe("Board", () => {
     const selectedColor = await screen.findByRole("button", {
       name: "Select #E50000",
     });
-    expect(screen.getAllByRole("button")).toHaveLength(Palette.length);
+    expect(
+      within(screen.getByRole("group", { name: "Palette" })).getAllByRole(
+        "button",
+      ),
+    ).toHaveLength(Palette.length);
     expect(
       screen
         .getByRole("button", { name: "Select #FFFFFF" })
@@ -155,5 +166,29 @@ describe("Board", () => {
     expect(webSocket.send).toHaveBeenCalledWith(
       JSON.stringify({ type: "DRAW", x: 0, y: 0, color: "#E50000" }),
     );
+  });
+
+  it("sends RESET and renders the Reset broadcast", async () => {
+    const drawnBoard = createBlankBoard();
+    drawnBoard[BOARD_SIZE - 1][BOARD_SIZE - 1] = "#E50000";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(drawnBoard));
+
+    renderBoard();
+
+    await screen.findByLabelText("Board");
+    expect(fakeContext.fillStyle).toBe("#E50000");
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+
+    expect(webSocket.send).toHaveBeenCalledWith(
+      JSON.stringify({ type: "RESET" }),
+    );
+    webSocket.dispatchEvent(
+      new MessageEvent("message", { data: JSON.stringify({ type: "RESET" }) }),
+    );
+
+    await waitFor(() => {
+      expect(fakeContext.fillStyle).toBe("#2B2B2B");
+    });
   });
 });
