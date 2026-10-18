@@ -1,20 +1,73 @@
 import { exports } from "cloudflare:workers";
-import { BLANK_COLOR, BOARD_SIZE, type Board } from "@drawing-board/shared";
+import {
+  BLANK_COLOR,
+  BOARD_SIZE,
+  type Board,
+  type DrawMessage,
+} from "@drawing-board/shared";
 import { describe, expect, it } from "vitest";
 
-describe("GET /api/board", () => {
-  it("returns a 32x32 Board of blank Cells", async () => {
-    const response = await exports.default.fetch(
-      "http://example.com/api/board",
+async function getBoard(): Promise<Board> {
+  const response = await exports.default.fetch("http://example.com/api/board");
+  expect(response.status).toBe(200);
+  return (await response.json()) as Board;
+}
+
+async function connect(): Promise<WebSocket> {
+  const response = await exports.default.fetch("http://example.com/ws", {
+    headers: { Upgrade: "websocket" },
+  });
+  expect(response.status).toBe(101);
+  if (!response.webSocket) {
+    throw new Error("Expected a WebSocket upgrade response");
+  }
+
+  response.webSocket.accept();
+  return response.webSocket;
+}
+
+function nextMessage(socket: WebSocket): Promise<string> {
+  return new Promise((resolve) => {
+    socket.addEventListener(
+      "message",
+      (event) => resolve(event.data as string),
+      { once: true },
     );
+  });
+}
 
-    expect(response.status).toBe(200);
-
-    const board = (await response.json()) as Board;
+describe("the Board API", () => {
+  it("returns a 32x32 Board of blank Cells", async () => {
+    const board = await getBoard();
     expect(board).toHaveLength(BOARD_SIZE);
     for (const row of board) {
       expect(row).toHaveLength(BOARD_SIZE);
       expect(row.every((color) => color === BLANK_COLOR)).toBe(true);
     }
+  });
+
+  it("broadcasts a valid Draw to other WebSocket clients and updates the Board", async () => {
+    const sender = await connect();
+    const recipient = await connect();
+    const draw: DrawMessage = {
+      type: "DRAW",
+      x: 4,
+      y: 7,
+      color: "#FFFFFF",
+    };
+    const recipientMessage = nextMessage(recipient);
+
+    sender.send(JSON.stringify(draw));
+
+    expect(await recipientMessage).toBe(JSON.stringify(draw));
+    expect((await getBoard())[7][4]).toBe("#FFFFFF");
+  });
+
+  it("silently drops an invalid Draw", async () => {
+    const socket = await connect();
+
+    socket.send('{"type":"DRAW","x":0,"y":0,"color":"#123456"}');
+
+    expect((await getBoard())[0][0]).toBe(BLANK_COLOR);
   });
 });
