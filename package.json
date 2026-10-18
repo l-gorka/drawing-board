@@ -13,7 +13,8 @@
     "test": "bun run --filter '*' test",
     "lint": "bun run --filter '*' lint",
     "typecheck": "bun run --filter '*' typecheck",
-    "build": "bun run --filter '*' build"
+    "build": "bun run --cwd shared build && bun run --cwd web build && bun run --cwd server build",
+    "deploy": "bun run build && bun run --cwd server deploy"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
