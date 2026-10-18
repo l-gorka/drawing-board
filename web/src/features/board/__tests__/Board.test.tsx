@@ -21,15 +21,25 @@ const fakeContext = {
 };
 
 class FakeWebSocket extends EventTarget {
+  static readonly CONNECTING = 0;
   static readonly OPEN = 1;
+  static autoOpen = true;
 
   readonly send = vi.fn();
   readonly close = vi.fn();
-  readyState = FakeWebSocket.OPEN;
+  readyState = FakeWebSocket.CONNECTING;
 
   constructor(_url: string | URL) {
     super();
     webSocket = this;
+    if (FakeWebSocket.autoOpen) {
+      queueMicrotask(() => this.open());
+    }
+  }
+
+  open() {
+    this.readyState = FakeWebSocket.OPEN;
+    this.dispatchEvent(new Event("open"));
   }
 }
 
@@ -48,6 +58,7 @@ function renderBoard() {
 
 beforeEach(() => {
   fakeContext.fillRect.mockClear();
+  FakeWebSocket.autoOpen = true;
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
     fakeContext as unknown as CanvasRenderingContext2D,
   );
@@ -82,9 +93,12 @@ describe("Board", () => {
       resolveSnapshot = resolve;
     });
     vi.spyOn(globalThis, "fetch").mockReturnValue(snapshot);
+    FakeWebSocket.autoOpen = false;
 
     renderBoard();
 
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    webSocket.open();
     await waitFor(() => {
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/board");
     });

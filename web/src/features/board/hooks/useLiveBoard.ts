@@ -39,9 +39,9 @@ export function useLiveBoard() {
     webSocketUrl.protocol = webSocketUrl.protocol === "https:" ? "wss:" : "ws:";
     const webSocket = new WebSocket(webSocketUrl);
     socket.current = webSocket;
-    setWebSocketStarted(true);
 
     webSocket.addEventListener("open", () => {
+      setWebSocketStarted(true);
       for (const message of queuedMessages.current) {
         webSocket.send(message);
       }
