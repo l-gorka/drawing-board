@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import {
   type Board,
   createBlankBoard,
+  drawCell,
   parseBoardMessage,
 } from "@drawing-board/shared";
 
@@ -42,16 +43,20 @@ export class BoardDO extends DurableObject<Env> {
       return;
     }
 
-    const updatedBoard =
-      boardMessage.type === "RESET"
-        ? createBlankBoard()
-        : this.board.map((row, y) =>
-            y === boardMessage.y
-              ? row.map((color, x) =>
-                  x === boardMessage.x ? boardMessage.color : color,
-                )
-              : row,
-          );
+    let updatedBoard: Board;
+    switch (boardMessage.type) {
+      case "DRAW":
+        updatedBoard = drawCell(
+          this.board,
+          boardMessage.x,
+          boardMessage.y,
+          boardMessage.color,
+        );
+        break;
+      case "RESET":
+        updatedBoard = createBlankBoard();
+        break;
+    }
     await this.ctx.storage.put("board", updatedBoard);
     this.board = updatedBoard;
 

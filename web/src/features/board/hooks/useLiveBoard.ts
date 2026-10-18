@@ -3,6 +3,7 @@ import {
   type BoardMessage,
   createBlankBoard,
   type DrawMessage,
+  drawCell,
   parseBoardMessage,
   type ResetMessage,
 } from "@drawing-board/shared";
@@ -11,15 +12,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchBoard } from "../api/fetchBoard";
 
 function applyMessage(board: Board, message: BoardMessage): Board {
-  if (message.type === "RESET") {
-    return createBlankBoard();
+  switch (message.type) {
+    case "DRAW":
+      return drawCell(board, message.x, message.y, message.color);
+    case "RESET":
+      return createBlankBoard();
   }
-
-  return board.map((row, y) =>
-    y === message.y
-      ? row.map((color, x) => (x === message.x ? message.color : color))
-      : row,
-  );
 }
 
 export function useLiveBoard() {

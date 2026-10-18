@@ -1,5 +1,10 @@
 export type { Board } from "./board";
-export { BLANK_COLOR, BOARD_SIZE, createBlankBoard } from "./board";
+export {
+  BLANK_COLOR,
+  BOARD_SIZE,
+  createBlankBoard,
+  drawCell,
+} from "./board";
 export type {
   BoardMessage,
   Color,

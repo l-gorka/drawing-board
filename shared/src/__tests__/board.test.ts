@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BLANK_COLOR, BOARD_SIZE, createBlankBoard } from "../board";
+import { BLANK_COLOR, BOARD_SIZE, createBlankBoard, drawCell } from "../board";
 
 describe("createBlankBoard", () => {
   it("creates a 32x32 Board", () => {
@@ -25,5 +25,19 @@ describe("createBlankBoard", () => {
     first[0][0] = "#000000";
 
     expect(second[0][0]).toBe(BLANK_COLOR);
+  });
+});
+
+describe("drawCell", () => {
+  it("returns a Board with the Drawn Cell changed", () => {
+    const board = createBlankBoard();
+    const x = 7;
+    const y = 11;
+    const color = "#E50000";
+
+    const updatedBoard = drawCell(board, x, y, color);
+
+    expect(updatedBoard[y][x]).toBe(color);
+    expect(board[y][x]).toBe(BLANK_COLOR);
   });
 });

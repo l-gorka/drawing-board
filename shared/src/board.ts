@@ -11,3 +11,19 @@ export function createBlankBoard(): Board {
     Array.from({ length: BOARD_SIZE }, () => BLANK_COLOR),
   );
 }
+
+/** Returns the Board after Drawing a color in one Cell. */
+export function drawCell(
+  board: Board,
+  cellX: number,
+  cellY: number,
+  color: string,
+): Board {
+  return board.map((row, rowIndex) =>
+    rowIndex === cellY
+      ? row.map((cellColor, columnIndex) =>
+          columnIndex === cellX ? color : cellColor,
+        )
+      : row,
+  );
+}
