@@ -19,5 +19,15 @@
       "tag": "v1",
       "new_sqlite_classes": ["BoardDO"]
     }
-  ]
+  ],
+  "previews": {
+    "durable_objects": {
+      "bindings": [
+        {
+          "name": "BOARD",
+          "class_name": "BoardDO"
+        }
+      ]
+    }
+  }
 }
