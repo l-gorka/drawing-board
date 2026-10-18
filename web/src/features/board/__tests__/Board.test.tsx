@@ -21,24 +21,37 @@ const fakeContext = {
 };
 
 class FakeWebSocket extends EventTarget {
+  static readonly CONNECTING = 0;
   static readonly OPEN = 1;
+  static autoOpen = true;
 
   readonly send = vi.fn();
   readonly close = vi.fn();
-  readyState = FakeWebSocket.OPEN;
+  readyState = FakeWebSocket.CONNECTING;
 
   constructor(_url: string | URL) {
     super();
     webSocket = this;
+    if (FakeWebSocket.autoOpen) {
+      queueMicrotask(() => this.open());
+    }
+  }
+
+  open() {
+    this.readyState = FakeWebSocket.OPEN;
+    this.dispatchEvent(new Event("open"));
   }
 }
 
 let webSocket: FakeWebSocket;
 
-function renderBoard() {
-  const queryClient = new QueryClient({
+function createQueryClient() {
+  return new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+}
+
+function renderBoard(queryClient = createQueryClient()) {
   render(
     <QueryClientProvider client={queryClient}>
       <Board />
@@ -48,6 +61,7 @@ function renderBoard() {
 
 beforeEach(() => {
   fakeContext.fillRect.mockClear();
+  FakeWebSocket.autoOpen = true;
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
     fakeContext as unknown as CanvasRenderingContext2D,
   );
@@ -74,6 +88,71 @@ describe("Board", () => {
     expect(canvas.width).toBe(CANVAS_SIZE);
     expect(canvas.height).toBe(CANVAS_SIZE);
     expect(fakeContext.fillRect).toHaveBeenCalledTimes(BOARD_SIZE * BOARD_SIZE);
+  });
+
+  it("replays messages received while the Board snapshot loads", async () => {
+    let resolveSnapshot: ((value: Response) => void) | undefined;
+    const snapshot = new Promise<Response>((resolve) => {
+      resolveSnapshot = resolve;
+    });
+    vi.spyOn(globalThis, "fetch").mockReturnValue(snapshot);
+    FakeWebSocket.autoOpen = false;
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(["board"], createBlankBoard());
+
+    renderBoard(queryClient);
+
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Board")).toBeNull();
+    webSocket.open();
+    await waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/board");
+    });
+    webSocket.dispatchEvent(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "DRAW",
+          x: BOARD_SIZE - 1,
+          y: BOARD_SIZE - 1,
+          color: "#E50000",
+        }),
+      }),
+    );
+    webSocket.dispatchEvent(
+      new MessageEvent("message", { data: JSON.stringify({ type: "RESET" }) }),
+    );
+    webSocket.dispatchEvent(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "DRAW",
+          x: BOARD_SIZE - 1,
+          y: BOARD_SIZE - 1,
+          color: "#0083C7",
+        }),
+      }),
+    );
+    if (!resolveSnapshot) {
+      throw new Error("The Board snapshot resolver was not initialized.");
+    }
+    resolveSnapshot(Response.json(createBlankBoard()));
+
+    await screen.findByLabelText("Board");
+    expect(fakeContext.fillStyle).toBe("#0083C7");
+
+    webSocket.dispatchEvent(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "DRAW",
+          x: BOARD_SIZE - 1,
+          y: BOARD_SIZE - 1,
+          color: "#02BE01",
+        }),
+      }),
+    );
+
+    await waitFor(() => {
+      expect(fakeContext.fillStyle).toBe("#02BE01");
+    });
   });
 
   it("shows an error message when the Board cannot be loaded", async () => {

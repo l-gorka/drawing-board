@@ -7,7 +7,7 @@ import {
   parseBoardMessage,
   type ResetMessage,
 } from "@drawing-board/shared";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchBoard } from "../api/fetchBoard";
 
@@ -27,6 +27,7 @@ export function useLiveBoard() {
   const bufferedMessages = useRef<BoardMessage[]>([]);
   const socket = useRef<WebSocket | null>(null);
   const queuedMessages = useRef<string[]>([]);
+  const queryClient = useQueryClient();
 
   const { data: snapshot, isError } = useQuery({
     queryKey: ["board"],
@@ -39,9 +40,10 @@ export function useLiveBoard() {
     webSocketUrl.protocol = webSocketUrl.protocol === "https:" ? "wss:" : "ws:";
     const webSocket = new WebSocket(webSocketUrl);
     socket.current = webSocket;
-    setWebSocketStarted(true);
 
     webSocket.addEventListener("open", () => {
+      queryClient.removeQueries({ queryKey: ["board"] });
+      setWebSocketStarted(true);
       for (const message of queuedMessages.current) {
         webSocket.send(message);
       }
@@ -70,10 +72,10 @@ export function useLiveBoard() {
         socket.current = null;
       }
     };
-  }, []);
+  }, [queryClient.removeQueries]);
 
   useEffect(() => {
-    if (!snapshot || hydrated.current) {
+    if (!webSocketStarted || !snapshot || hydrated.current) {
       return;
     }
 
@@ -84,7 +86,7 @@ export function useLiveBoard() {
     bufferedMessages.current = [];
     hydrated.current = true;
     setBoard(hydratedBoard);
-  }, [snapshot]);
+  }, [snapshot, webSocketStarted]);
 
   const draw = useCallback((message: DrawMessage) => {
     setBoard((currentBoard) =>
