@@ -6,7 +6,7 @@ import { BoardCanvas } from "./BoardCanvas";
 const DEFAULT_DRAW_COLOR = Palette[1];
 
 export function Board() {
-  const { board, draw, isError } = useLiveBoard();
+  const { board, draw, reset, isError } = useLiveBoard();
   const [selectedColor, setSelectedColor] = useState<Color>(DEFAULT_DRAW_COLOR);
 
   function handleDraw(x: number, y: number): void {
@@ -46,6 +46,9 @@ export function Board() {
           </button>
         ))}
       </fieldset>
+      <button onClick={reset} type="button">
+        Reset
+      </button>
     </div>
   );
 }

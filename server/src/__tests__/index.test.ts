@@ -80,11 +80,56 @@ describe("the Board API", () => {
     expect((await getBoard())[draw.y][draw.x]).toBe(draw.color);
   });
 
+  it("resets the Board for every WebSocket client and persists it", async () => {
+    const sender = await connect();
+    const recipient = await connect();
+    const draw: DrawMessage = {
+      type: "DRAW",
+      x: 9,
+      y: 11,
+      color: "#E50000",
+    };
+
+    sender.send(JSON.stringify(draw));
+    expect((await getBoard())[draw.y][draw.x]).toBe(draw.color);
+
+    const reset = JSON.stringify({ type: "RESET" });
+    const senderMessage = nextMessage(sender);
+    const recipientMessage = nextMessage(recipient);
+    sender.send(reset);
+
+    expect(await senderMessage).toBe(reset);
+    expect(await recipientMessage).toBe(reset);
+    expect(
+      (await getBoard()).every((row) =>
+        row.every((color) => color === BLANK_COLOR),
+      ),
+    ).toBe(true);
+    await evictDurableObject(env.BOARD.getByName("main"));
+    expect(
+      (await getBoard()).every((row) =>
+        row.every((color) => color === BLANK_COLOR),
+      ),
+    ).toBe(true);
+  });
+
   it("silently drops an invalid Draw", async () => {
     const socket = await connect();
 
     socket.send('{"type":"DRAW","x":0,"y":0,"color":"#123456"}');
 
     expect((await getBoard())[0][0]).toBe(BLANK_COLOR);
+  });
+
+  it("silently drops an unknown message type", async () => {
+    const socket = await connect();
+
+    socket.send('{"type":"UNKNOWN"}');
+
+    expect(
+      (await getBoard()).every((row) =>
+        row.every((color) => color === BLANK_COLOR),
+      ),
+    ).toBe(true);
   });
 });

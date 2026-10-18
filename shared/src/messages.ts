@@ -28,13 +28,28 @@ export type DrawMessage = {
   color: Color;
 };
 
+export type ResetMessage = {
+  type: "RESET";
+};
+
+export type BoardMessage = DrawMessage | ResetMessage;
+
 export function parseDrawMessage(input: unknown): DrawMessage | null {
+  const message = parseBoardMessage(input);
+  return message?.type === "DRAW" ? message : null;
+}
+
+export function parseBoardMessage(input: unknown): BoardMessage | null {
   if (typeof input !== "string") {
     return null;
   }
 
   try {
     const value: unknown = JSON.parse(input);
+    if (isRecord(value) && value.type === "RESET") {
+      return { type: "RESET" };
+    }
+
     if (
       !isRecord(value) ||
       value.type !== "DRAW" ||

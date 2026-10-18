@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import {
   type Board,
   createBlankBoard,
-  parseDrawMessage,
+  parseBoardMessage,
 } from "@drawing-board/shared";
 
 type Env = {
@@ -37,20 +37,28 @@ export class BoardDO extends DurableObject<Env> {
     sender: WebSocket,
     message: string | ArrayBuffer,
   ): Promise<void> {
-    const draw = parseDrawMessage(message);
-    if (!draw) {
+    const boardMessage = parseBoardMessage(message);
+    if (!boardMessage) {
       return;
     }
 
-    const updatedBoard = this.board.map((row) => [...row]);
-    updatedBoard[draw.y][draw.x] = draw.color;
+    const updatedBoard =
+      boardMessage.type === "RESET"
+        ? createBlankBoard()
+        : this.board.map((row, y) =>
+            y === boardMessage.y
+              ? row.map((color, x) =>
+                  x === boardMessage.x ? boardMessage.color : color,
+                )
+              : row,
+          );
     await this.ctx.storage.put("board", updatedBoard);
     this.board = updatedBoard;
 
-    const serializedDraw = JSON.stringify(draw);
+    const serializedMessage = JSON.stringify(boardMessage);
     for (const socket of this.ctx.getWebSockets()) {
-      if (socket !== sender) {
-        socket.send(serializedDraw);
+      if (boardMessage.type === "RESET" || socket !== sender) {
+        socket.send(serializedMessage);
       }
     }
   }
