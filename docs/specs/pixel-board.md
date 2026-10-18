@@ -42,8 +42,8 @@ A lightweight, zero-auth real-time collaborative pixel board. Anyone who opens t
 4. **Interactive Drawing:** Clicking or dragging over a Cell updates the Canvas immediately (optimistic) and sends a `DRAW` message.
 5. **Server-authoritative Board:** `BoardDO` applies each valid `DRAW` to its Board, persists it, and broadcasts it to all other connected clients.
 6. **Validation:** `BoardDO` accepts a `DRAW` only if `x` and `y` are integers in 0–31 and `color` is a member of the Palette. Anything else is silently dropped. All other messages with an unknown `type` are dropped.
-7. **Palette:** Participants choose from a fixed Palette (16 colors, defined once in `shared/`). White is part of the Palette and acts as the eraser. There is no free color picker.
-8. **Reset:** A Reset button sets every Cell to white for everyone. Any visitor can press it, with no confirmation dialog. `BoardDO` clears and persists the Board, then broadcasts `RESET` to all connected clients, including the sender.
+7. **Palette:** Participants choose from a fixed Palette (16 colors, defined once in `shared/`). The Blank color (dark gray) is part of the Palette and acts as the eraser. There is no free color picker.
+8. **Reset:** A Reset button sets every Cell to the Blank color for everyone. Any visitor can press it, with no confirmation dialog. `BoardDO` clears and persists the Board, then broadcasts `RESET` to all connected clients, including the sender.
 9. **Persistence across hibernation and reloads:** The Board survives Durable Object hibernation, eviction, and page reloads. A reloaded client re-fetches the Board from `GET /api/board`.
 10. **Deployment:** The app can be built and deployed as a single Worker serving the frontend and the API.
 

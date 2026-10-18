@@ -1,0 +1,14 @@
+{
+  "name": "@drawing-board/shared",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit"
+  }
+}
