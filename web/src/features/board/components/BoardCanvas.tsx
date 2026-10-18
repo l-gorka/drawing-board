@@ -7,6 +7,7 @@ type BoardCanvasProps = {
   onDraw: (x: number, y: number) => void;
 };
 
+
 export function BoardCanvas({ board, onDraw }: BoardCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isDrawing = useRef(false);
