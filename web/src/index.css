@@ -2,3 +2,38 @@ body {
   background: #1a1a1a;
   color: #eeeeee;
 }
+
+.board-layout {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  width: fit-content;
+}
+
+.palette {
+  display: grid;
+  grid-template-columns: repeat(8, 1.5rem);
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+  padding: 0;
+  border: 0;
+}
+
+.palette-color {
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 0;
+  padding: 0;
+  border-radius: 0;
+}
+
+.palette-color svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.palette-color[aria-pressed="true"] {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
