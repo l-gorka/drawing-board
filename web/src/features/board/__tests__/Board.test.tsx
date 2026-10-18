@@ -45,10 +45,13 @@ class FakeWebSocket extends EventTarget {
 
 let webSocket: FakeWebSocket;
 
-function renderBoard() {
-  const queryClient = new QueryClient({
+function createQueryClient() {
+  return new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+}
+
+function renderBoard(queryClient = createQueryClient()) {
   render(
     <QueryClientProvider client={queryClient}>
       <Board />
@@ -94,10 +97,13 @@ describe("Board", () => {
     });
     vi.spyOn(globalThis, "fetch").mockReturnValue(snapshot);
     FakeWebSocket.autoOpen = false;
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(["board"], createBlankBoard());
 
-    renderBoard();
+    renderBoard(queryClient);
 
     expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Board")).toBeNull();
     webSocket.open();
     await waitFor(() => {
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/board");
