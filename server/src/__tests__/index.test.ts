@@ -1,4 +1,5 @@
-import { exports } from "cloudflare:workers";
+import { evictDurableObject } from "cloudflare:test";
+import { env, exports } from "cloudflare:workers";
 import {
   BLANK_COLOR,
   BOARD_SIZE,
@@ -61,6 +62,22 @@ describe("the Board API", () => {
 
     expect(await recipientMessage).toBe(JSON.stringify(draw));
     expect((await getBoard())[7][4]).toBe("#FFFFFF");
+  });
+
+  it("restores Drawn Cells after Durable Object eviction", async () => {
+    const socket = await connect();
+    const draw: DrawMessage = {
+      type: "DRAW",
+      x: 15,
+      y: 16,
+      color: "#E50000",
+    };
+
+    socket.send(JSON.stringify(draw));
+    expect((await getBoard())[draw.y][draw.x]).toBe(draw.color);
+    await evictDurableObject(env.BOARD.getByName("main"));
+
+    expect((await getBoard())[draw.y][draw.x]).toBe(draw.color);
   });
 
   it("silently drops an invalid Draw", async () => {
