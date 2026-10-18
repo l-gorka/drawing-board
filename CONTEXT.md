@@ -2,7 +2,7 @@
 
 A real-time multiplayer pixel board: a zero-auth shared 32×32 Board that anyone can Draw on, synchronized live over WebSockets by a Cloudflare Durable Object.
 
-The repository contains (some directories are created by the scaffold issue):
+The repository contains:
 
 - `server/` — Hono Worker and the `BoardDO` Durable Object.
 - `web/` — React + Vite client that renders the Board on a Canvas.
@@ -27,13 +27,28 @@ explicit follow-up work.
 The agent workflow reads this section for the baseline checks to run before
 handoff.
 
-TODO: fill in once the workspaces exist (GitHub issue #1 owns this).
+Run from the repository root. Each root command runs the matching script in
+every workspace (`bun run test`, `bun run lint`, `bun run typecheck`,
+`bun run build`).
 
 ```text
-<workspace>: <test command>
-<workspace>: <lint command>
-<workspace>: <build command>
+shared: bun run --cwd shared test
+shared: bun run --cwd shared lint
+shared: bun run --cwd shared typecheck
+shared: bun run --cwd shared build
+server: bun run --cwd server test
+server: bun run --cwd server lint
+server: bun run --cwd server typecheck
+server: bun run --cwd server build
+web: bun run --cwd web test
+web: bun run --cwd web lint
+web: bun run --cwd web typecheck
+web: bun run --cwd web build
 ```
+
+Tests run on Vitest and linting on Biome. `server` tests run inside
+Cloudflare's Worker runtime. `bun run dev` starts the Worker (:8787) and the
+web app (:5173).
 
 ## Project conventions
 
