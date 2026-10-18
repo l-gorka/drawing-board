@@ -16,4 +16,6 @@ app.get("/api/board", async (c) => {
   return c.json(board);
 });
 
+app.get("/ws", (c) => c.env.BOARD.getByName(BOARD_NAME).fetch(c.req.raw));
+
 export default app;
