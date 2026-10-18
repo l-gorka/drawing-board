@@ -5,9 +5,21 @@ import {
   parseDrawMessage,
 } from "@drawing-board/shared";
 
+type Env = {
+  BOARD: DurableObjectNamespace<BoardDO>;
+};
+
 /** The single Durable Object that holds the Board. */
-export class BoardDO extends DurableObject {
-  private readonly board = createBlankBoard();
+export class BoardDO extends DurableObject<Env> {
+  private board = createBlankBoard();
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.ctx.blockConcurrencyWhile(async () => {
+      this.board =
+        (await this.ctx.storage.get<Board>("board")) ?? createBlankBoard();
+    });
+  }
 
   async getBoard(): Promise<Board> {
     return this.board;
@@ -30,7 +42,11 @@ export class BoardDO extends DurableObject {
       return;
     }
 
-    this.board[draw.y][draw.x] = draw.color;
+    const updatedBoard = this.board.map((row) => [...row]);
+    updatedBoard[draw.y][draw.x] = draw.color;
+    await this.ctx.storage.put("board", updatedBoard);
+    this.board = updatedBoard;
+
     const serializedDraw = JSON.stringify(draw);
     for (const socket of this.ctx.getWebSockets()) {
       if (socket !== sender) {
