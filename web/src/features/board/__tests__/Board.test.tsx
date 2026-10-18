@@ -76,6 +76,65 @@ describe("Board", () => {
     expect(fakeContext.fillRect).toHaveBeenCalledTimes(BOARD_SIZE * BOARD_SIZE);
   });
 
+  it("replays messages received while the Board snapshot loads", async () => {
+    let resolveSnapshot: ((value: Response) => void) | undefined;
+    const snapshot = new Promise<Response>((resolve) => {
+      resolveSnapshot = resolve;
+    });
+    vi.spyOn(globalThis, "fetch").mockReturnValue(snapshot);
+
+    renderBoard();
+
+    await waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/board");
+    });
+    webSocket.dispatchEvent(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "DRAW",
+          x: BOARD_SIZE - 1,
+          y: BOARD_SIZE - 1,
+          color: "#E50000",
+        }),
+      }),
+    );
+    webSocket.dispatchEvent(
+      new MessageEvent("message", { data: JSON.stringify({ type: "RESET" }) }),
+    );
+    webSocket.dispatchEvent(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "DRAW",
+          x: BOARD_SIZE - 1,
+          y: BOARD_SIZE - 1,
+          color: "#0083C7",
+        }),
+      }),
+    );
+    if (!resolveSnapshot) {
+      throw new Error("The Board snapshot resolver was not initialized.");
+    }
+    resolveSnapshot(Response.json(createBlankBoard()));
+
+    await screen.findByLabelText("Board");
+    expect(fakeContext.fillStyle).toBe("#0083C7");
+
+    webSocket.dispatchEvent(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "DRAW",
+          x: BOARD_SIZE - 1,
+          y: BOARD_SIZE - 1,
+          color: "#02BE01",
+        }),
+      }),
+    );
+
+    await waitFor(() => {
+      expect(fakeContext.fillStyle).toBe("#02BE01");
+    });
+  });
+
   it("shows an error message when the Board cannot be loaded", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("nope", { status: 500 }),
