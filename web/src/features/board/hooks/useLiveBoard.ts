@@ -7,7 +7,8 @@ import {
   parseBoardMessage,
   type ResetMessage,
 } from "@drawing-board/shared";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { WebSocket as ReconnectingWebSocket } from "partysocket";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchBoard } from "../api/fetchBoard";
 
@@ -22,35 +23,44 @@ function applyMessage(board: Board, message: BoardMessage): Board {
 
 export function useLiveBoard() {
   const [board, setBoard] = useState<Board | null>(null);
-  const [webSocketStarted, setWebSocketStarted] = useState(false);
+  const [connectionGeneration, setConnectionGeneration] = useState(0);
+  const connectionSequence = useRef(0);
+  const activeConnectionGeneration = useRef<number | null>(null);
   const hydrated = useRef(false);
   const bufferedMessages = useRef<BoardMessage[]>([]);
-  const socket = useRef<WebSocket | null>(null);
-  const queuedMessages = useRef<string[]>([]);
-  const queryClient = useQueryClient();
+  const socket = useRef<ReconnectingWebSocket | null>(null);
+  const lastResumeAt = useRef(0);
 
   const { data: snapshot, isError } = useQuery({
-    queryKey: ["board"],
+    queryKey: ["board", connectionGeneration],
     queryFn: fetchBoard,
-    enabled: webSocketStarted,
+    enabled: connectionGeneration > 0,
   });
 
   useEffect(() => {
     const webSocketUrl = new URL("/ws", window.location.href);
     webSocketUrl.protocol = webSocketUrl.protocol === "https:" ? "wss:" : "ws:";
-    const webSocket = new WebSocket(webSocketUrl);
+    const webSocket = new ReconnectingWebSocket(webSocketUrl.toString());
     socket.current = webSocket;
+    let isActive = true;
 
     webSocket.addEventListener("open", () => {
-      queryClient.removeQueries({ queryKey: ["board"] });
-      setWebSocketStarted(true);
-      for (const message of queuedMessages.current) {
-        webSocket.send(message);
+      if (!isActive) {
+        return;
       }
-      queuedMessages.current = [];
+
+      hydrated.current = false;
+      bufferedMessages.current = [];
+      const generation = ++connectionSequence.current;
+      activeConnectionGeneration.current = generation;
+      setConnectionGeneration(generation);
     });
 
     webSocket.addEventListener("message", (event) => {
+      if (!isActive) {
+        return;
+      }
+
       const message = parseBoardMessage(event.data);
       if (!message) {
         return;
@@ -66,16 +76,49 @@ export function useLiveBoard() {
       );
     });
 
+    webSocket.addEventListener("close", () => {
+      if (!isActive) {
+        return;
+      }
+
+      hydrated.current = false;
+      bufferedMessages.current = [];
+      activeConnectionGeneration.current = null;
+    });
+
+    const resumeBoard = () => {
+      if (!isActive || document.visibilityState !== "visible") {
+        return;
+      }
+
+      const now = Date.now();
+      if (now - lastResumeAt.current < 100) {
+        return;
+      }
+      lastResumeAt.current = now;
+      webSocket.reconnect();
+    };
+
+    window.addEventListener("pageshow", resumeBoard);
+    document.addEventListener("visibilitychange", resumeBoard);
+
     return () => {
+      isActive = false;
+      window.removeEventListener("pageshow", resumeBoard);
+      document.removeEventListener("visibilitychange", resumeBoard);
       webSocket.close();
       if (socket.current === webSocket) {
         socket.current = null;
       }
     };
-  }, [queryClient.removeQueries]);
+  }, []);
 
   useEffect(() => {
-    if (!webSocketStarted || !snapshot || hydrated.current) {
+    if (
+      !snapshot ||
+      hydrated.current ||
+      activeConnectionGeneration.current !== connectionGeneration
+    ) {
       return;
     }
 
@@ -86,7 +129,7 @@ export function useLiveBoard() {
     bufferedMessages.current = [];
     hydrated.current = true;
     setBoard(hydratedBoard);
-  }, [snapshot, webSocketStarted]);
+  }, [connectionGeneration, snapshot]);
 
   const draw = useCallback((message: DrawMessage) => {
     setBoard((currentBoard) =>
@@ -94,22 +137,14 @@ export function useLiveBoard() {
     );
 
     const serializedDraw = JSON.stringify(message);
-    if (socket.current?.readyState === WebSocket.OPEN) {
-      socket.current.send(serializedDraw);
-    } else {
-      queuedMessages.current.push(serializedDraw);
-    }
+    socket.current?.send(serializedDraw);
   }, []);
 
   const reset = useCallback(() => {
     const serializedReset = JSON.stringify({
       type: "RESET",
     } satisfies ResetMessage);
-    if (socket.current?.readyState === WebSocket.OPEN) {
-      socket.current.send(serializedReset);
-    } else {
-      queuedMessages.current.push(serializedReset);
-    }
+    socket.current?.send(serializedReset);
   }, []);
 
   return { board, draw, reset, isError };

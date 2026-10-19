@@ -35,7 +35,7 @@ export class BoardDO extends DurableObject<Env> {
   }
 
   async webSocketMessage(
-    sender: WebSocket,
+    _sender: WebSocket,
     message: string | ArrayBuffer,
   ): Promise<void> {
     const boardMessage = parseBoardMessage(message);
@@ -62,9 +62,7 @@ export class BoardDO extends DurableObject<Env> {
 
     const serializedMessage = JSON.stringify(boardMessage);
     for (const socket of this.ctx.getWebSockets()) {
-      if (boardMessage.type === "RESET" || socket !== sender) {
-        socket.send(serializedMessage);
-      }
+      socket.send(serializedMessage);
     }
   }
 }

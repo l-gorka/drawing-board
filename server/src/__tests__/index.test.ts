@@ -47,7 +47,7 @@ describe("the Board API", () => {
     }
   });
 
-  it("broadcasts a valid Draw to other WebSocket clients and updates the Board", async () => {
+  it("broadcasts a valid Draw to every WebSocket client and updates the Board", async () => {
     const sender = await connect();
     const recipient = await connect();
     const draw: DrawMessage = {
@@ -56,10 +56,12 @@ describe("the Board API", () => {
       y: 7,
       color: "#FFFFFF",
     };
+    const senderMessage = nextMessage(sender);
     const recipientMessage = nextMessage(recipient);
 
     sender.send(JSON.stringify(draw));
 
+    expect(await senderMessage).toBe(JSON.stringify(draw));
     expect(await recipientMessage).toBe(JSON.stringify(draw));
     expect((await getBoard())[7][4]).toBe("#FFFFFF");
   });
