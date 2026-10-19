@@ -70,6 +70,5 @@ Server to client (broadcast):
 * External databases or storage services (D1, R2, KV)
 * Anti-griefing cooldown timers, rate limiting, or access control on Reset
 * Smooth vector/Bresenham line interpolation
-* Automatic WebSocket reconnection (a page reload recovers)
 * Multiple Boards
 * Free color picker
