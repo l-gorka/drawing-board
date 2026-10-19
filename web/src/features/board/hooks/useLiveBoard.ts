@@ -7,7 +7,8 @@ import {
   parseBoardMessage,
   type ResetMessage,
 } from "@drawing-board/shared";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import ReconnectingWebSocket from "partysocket/ws";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchBoard } from "../api/fetchBoard";
 
@@ -20,37 +21,56 @@ function applyMessage(board: Board, message: BoardMessage): Board {
   }
 }
 
+function createWebSocket(): ReconnectingWebSocket {
+  const webSocketUrl = new URL("/ws", window.location.href);
+  webSocketUrl.protocol = webSocketUrl.protocol === "https:" ? "wss:" : "ws:";
+  return new ReconnectingWebSocket(webSocketUrl.toString());
+}
+
+function isStale(socket: ReconnectingWebSocket): boolean {
+  return socket.readyState !== ReconnectingWebSocket.OPEN;
+}
+
 export function useLiveBoard() {
   const [board, setBoard] = useState<Board | null>(null);
-  const [webSocketStarted, setWebSocketStarted] = useState(false);
-  const hydrated = useRef(false);
+  const [isError, setIsError] = useState(false);
+  // Messages seen while the current snapshot loads, replayed on top of it so
+  // re-hydration never loses a concurrent Draw.
   const bufferedMessages = useRef<BoardMessage[]>([]);
-  const socket = useRef<WebSocket | null>(null);
-  const queuedMessages = useRef<string[]>([]);
-  const queryClient = useQueryClient();
-
-  const { data: snapshot, isError } = useQuery({
+  const hydrated = useRef(false);
+  const socket = useRef<ReconnectingWebSocket | null>(null);
+  // Driven manually: the snapshot is fetched on every WebSocket `open`, so the
+  // connection is established before the first Board fetch.
+  const { refetch } = useQuery({
     queryKey: ["board"],
     queryFn: fetchBoard,
-    enabled: webSocketStarted,
+    enabled: false,
   });
 
+  // Re-runs per connection: on each `open` the Board is re-hydrated from the
+  // server-authoritative snapshot, so a reconnect never shows a stale Board.
+  const hydrate = useCallback(async () => {
+    bufferedMessages.current = [];
+    hydrated.current = false;
+    const result = await refetch();
+    if (result.error) {
+      setIsError(true);
+      return;
+    }
+
+    setIsError(false);
+    const snapshot = result.data;
+    if (snapshot) {
+      setBoard(bufferedMessages.current.reduce(applyMessage, snapshot));
+      hydrated.current = true;
+    }
+  }, [refetch]);
+
   useEffect(() => {
-    const webSocketUrl = new URL("/ws", window.location.href);
-    webSocketUrl.protocol = webSocketUrl.protocol === "https:" ? "wss:" : "ws:";
-    const webSocket = new WebSocket(webSocketUrl);
+    const webSocket = createWebSocket();
     socket.current = webSocket;
 
-    webSocket.addEventListener("open", () => {
-      queryClient.removeQueries({ queryKey: ["board"] });
-      setWebSocketStarted(true);
-      for (const message of queuedMessages.current) {
-        webSocket.send(message);
-      }
-      queuedMessages.current = [];
-    });
-
-    webSocket.addEventListener("message", (event) => {
+    const handleMessage = (event: MessageEvent) => {
       const message = parseBoardMessage(event.data);
       if (!message) {
         return;
@@ -64,52 +84,55 @@ export function useLiveBoard() {
       setBoard((currentBoard) =>
         currentBoard ? applyMessage(currentBoard, message) : currentBoard,
       );
+    };
+
+    // A suspended/backgrounded tab can silently lose its socket without a
+    // close event, so recover when it becomes visible again: reconnect if the
+    // connection is down, otherwise re-hydrate the Board.
+    const recover = () => {
+      if (isStale(webSocket)) {
+        webSocket.reconnect();
+        return;
+      }
+      void hydrate();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "hidden") {
+        recover();
+      }
+    };
+
+    webSocket.addEventListener("open", () => {
+      void hydrate();
     });
+    webSocket.addEventListener("message", handleMessage);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pageshow", recover);
 
     return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pageshow", recover);
+      // Deliberate teardown: close() disables partysocket's auto-reconnect.
       webSocket.close();
       if (socket.current === webSocket) {
         socket.current = null;
       }
     };
-  }, [queryClient.removeQueries]);
-
-  useEffect(() => {
-    if (!webSocketStarted || !snapshot || hydrated.current) {
-      return;
-    }
-
-    const hydratedBoard = bufferedMessages.current.reduce(
-      applyMessage,
-      snapshot,
-    );
-    bufferedMessages.current = [];
-    hydrated.current = true;
-    setBoard(hydratedBoard);
-  }, [snapshot, webSocketStarted]);
+  }, [hydrate]);
 
   const draw = useCallback((message: DrawMessage) => {
     setBoard((currentBoard) =>
       currentBoard ? applyMessage(currentBoard, message) : currentBoard,
     );
-
-    const serializedDraw = JSON.stringify(message);
-    if (socket.current?.readyState === WebSocket.OPEN) {
-      socket.current.send(serializedDraw);
-    } else {
-      queuedMessages.current.push(serializedDraw);
-    }
+    // partysocket buffers while disconnected and flushes on the next `open`.
+    socket.current?.send(JSON.stringify(message));
   }, []);
 
   const reset = useCallback(() => {
-    const serializedReset = JSON.stringify({
-      type: "RESET",
-    } satisfies ResetMessage);
-    if (socket.current?.readyState === WebSocket.OPEN) {
-      socket.current.send(serializedReset);
-    } else {
-      queuedMessages.current.push(serializedReset);
-    }
+    socket.current?.send(
+      JSON.stringify({ type: "RESET" } satisfies ResetMessage),
+    );
   }, []);
 
   return { board, draw, reset, isError };
