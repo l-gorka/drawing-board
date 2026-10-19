@@ -2,6 +2,7 @@ import { type Color, type DrawMessage, Palette } from "@drawing-board/shared";
 import { useState } from "react";
 import { useLiveBoard } from "../hooks/useLiveBoard";
 import { BoardCanvas } from "./BoardCanvas";
+import { BoardLoading } from "./BoardLoading";
 
 const DEFAULT_DRAW_COLOR = Palette[1];
 
@@ -24,7 +25,7 @@ export function Board() {
   }
 
   if (!board) {
-    return <p>Loading the Board…</p>;
+    return <BoardLoading />;
   }
 
   return (
