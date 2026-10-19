@@ -30,6 +30,20 @@ the GitHub repository, builds it, and deploys each change that reaches `main`.
 The Worker name must match the `name` in `server/wrangler.jsonc`. The deploy
 command runs Wrangler from `server/`, where that configuration lives.
 
+## Branch previews
+
+Enable **Preview Builds** in the Worker's Settings > Builds > Branch control.
+Use these commands in Cloudflare Workers Builds:
+
+- **Build command:** `bun run build`
+- **Production deploy command:** `bun run --cwd server deploy`
+- **Preview command:** `bun run --cwd server preview`
+
+Cloudflare runs the build first, which creates `web/dist`. Wrangler then
+uploads that frontend together with the Worker and serves the API and
+WebSocket routes from the same preview origin. Each non-production branch gets
+its own isolated Worker Preview and Durable Object state.
+
 Cloudflare builds only code already pushed to GitHub. It cannot deploy
 uncommitted local changes.
 

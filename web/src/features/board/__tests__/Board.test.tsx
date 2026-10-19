@@ -2,6 +2,7 @@ import { BOARD_SIZE, createBlankBoard, Palette } from "@drawing-board/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   cleanup,
+  createEvent,
   fireEvent,
   render,
   screen,
@@ -196,6 +197,79 @@ describe("Board", () => {
     );
     expect(webSocket.send).toHaveBeenCalledWith(
       JSON.stringify({ type: "DRAW", x: 3, y: 3, color: "#FFFFFF" }),
+    );
+  });
+
+  it("sends DRAW messages for touch taps and drags", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json(createBlankBoard()),
+    );
+    vi.spyOn(
+      HTMLCanvasElement.prototype,
+      "getBoundingClientRect",
+    ).mockReturnValue({
+      bottom: CANVAS_SIZE,
+      height: CANVAS_SIZE,
+      left: 0,
+      right: CANVAS_SIZE,
+      top: 0,
+      width: CANVAS_SIZE,
+      x: 0,
+      y: 0,
+      toJSON: () => "",
+    });
+
+    renderBoard();
+
+    const canvas = await screen.findByLabelText<HTMLCanvasElement>("Board");
+    expect(canvas.className).toBe("board-canvas");
+    const touchDown = createEvent.pointerDown(canvas, {
+      clientX: 2 * 16 + 1,
+      clientY: 3 * 16 + 1,
+      pointerId: 1,
+      pointerType: "touch",
+    });
+    fireEvent(canvas, touchDown);
+    expect(touchDown.defaultPrevented).toBe(true);
+    fireEvent.pointerMove(canvas, {
+      clientX: 3 * 16 + 1,
+      clientY: 3 * 16 + 1,
+      pointerId: 1,
+      pointerType: "touch",
+    });
+
+    expect(webSocket.send).toHaveBeenCalledWith(
+      JSON.stringify({ type: "DRAW", x: 2, y: 3, color: "#FFFFFF" }),
+    );
+    expect(webSocket.send).toHaveBeenCalledWith(
+      JSON.stringify({ type: "DRAW", x: 3, y: 3, color: "#FFFFFF" }),
+    );
+
+    fireEvent.pointerCancel(canvas, {
+      pointerId: 1,
+      pointerType: "touch",
+    });
+    fireEvent.pointerMove(canvas, {
+      clientX: 4 * 16 + 1,
+      clientY: 3 * 16 + 1,
+      pointerId: 1,
+      pointerType: "touch",
+    });
+
+    expect(webSocket.send).not.toHaveBeenCalledWith(
+      JSON.stringify({ type: "DRAW", x: 4, y: 3, color: "#FFFFFF" }),
+    );
+
+    const penDown = createEvent.pointerDown(canvas, {
+      clientX: 5 * 16 + 1,
+      clientY: 3 * 16 + 1,
+      pointerId: 2,
+      pointerType: "pen",
+    });
+    fireEvent(canvas, penDown);
+    expect(penDown.defaultPrevented).toBe(true);
+    expect(webSocket.send).toHaveBeenCalledWith(
+      JSON.stringify({ type: "DRAW", x: 5, y: 3, color: "#FFFFFF" }),
     );
   });
 
