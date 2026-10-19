@@ -21,30 +21,46 @@ const fakeContext = {
   strokeRect: vi.fn(),
 };
 
-class FakeWebSocket extends EventTarget {
-  static readonly CONNECTING = 0;
-  static readonly OPEN = 1;
-  static autoOpen = true;
+// A ref and shared mock defined in hoisted so vi.mock can access them
+const { webSocketRef, sharedSend, FakeWebSocketClass } = vi.hoisted(() => {
+  const ref: { current: null | InstanceType<typeof FakeWebSocket> } = {
+    current: null,
+  };
+  const send = vi.fn();
 
-  readonly send = vi.fn();
-  readonly close = vi.fn();
-  readyState = FakeWebSocket.CONNECTING;
+  class FakeWebSocket extends EventTarget {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static autoOpen = true;
 
-  constructor(_url: string | URL) {
-    super();
-    webSocket = this;
-    if (FakeWebSocket.autoOpen) {
-      queueMicrotask(() => this.open());
+    readonly send = send;
+    readonly close = vi.fn();
+    readyState = FakeWebSocket.CONNECTING;
+
+    constructor(_url: string | URL) {
+      super();
+      ref.current = this;
+      if (FakeWebSocket.autoOpen) {
+        queueMicrotask(() => this.open());
+      }
+    }
+
+    open() {
+      this.readyState = FakeWebSocket.OPEN;
+      this.dispatchEvent(new Event("open"));
     }
   }
 
-  open() {
-    this.readyState = FakeWebSocket.OPEN;
-    this.dispatchEvent(new Event("open"));
-  }
-}
+  return {
+    webSocketRef: ref,
+    sharedSend: send,
+    FakeWebSocketClass: FakeWebSocket,
+  };
+});
 
-let webSocket: FakeWebSocket;
+vi.mock("partysocket/ws", () => ({
+  default: FakeWebSocketClass,
+}));
 
 function createQueryClient() {
   return new QueryClient({
@@ -62,17 +78,16 @@ function renderBoard(queryClient = createQueryClient()) {
 
 beforeEach(() => {
   fakeContext.fillRect.mockClear();
-  FakeWebSocket.autoOpen = true;
+  sharedSend.mockClear();
+  FakeWebSocketClass.autoOpen = true;
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
     fakeContext as unknown as CanvasRenderingContext2D,
   );
-  vi.stubGlobal("WebSocket", FakeWebSocket);
 });
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
-  vi.unstubAllGlobals();
 });
 
 describe("Board", () => {
@@ -97,7 +112,7 @@ describe("Board", () => {
       resolveSnapshot = resolve;
     });
     vi.spyOn(globalThis, "fetch").mockReturnValue(snapshot);
-    FakeWebSocket.autoOpen = false;
+    FakeWebSocketClass.autoOpen = false;
     const queryClient = createQueryClient();
     queryClient.setQueryData(["board"], createBlankBoard());
 
@@ -105,11 +120,11 @@ describe("Board", () => {
 
     expect(globalThis.fetch).not.toHaveBeenCalled();
     expect(screen.queryByLabelText("Board")).toBeNull();
-    webSocket.open();
+    webSocketRef.current?.open();
     await waitFor(() => {
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/board");
     });
-    webSocket.dispatchEvent(
+    webSocketRef.current?.dispatchEvent(
       new MessageEvent("message", {
         data: JSON.stringify({
           type: "DRAW",
@@ -119,10 +134,10 @@ describe("Board", () => {
         }),
       }),
     );
-    webSocket.dispatchEvent(
+    webSocketRef.current?.dispatchEvent(
       new MessageEvent("message", { data: JSON.stringify({ type: "RESET" }) }),
     );
-    webSocket.dispatchEvent(
+    webSocketRef.current?.dispatchEvent(
       new MessageEvent("message", {
         data: JSON.stringify({
           type: "DRAW",
@@ -140,7 +155,7 @@ describe("Board", () => {
     await screen.findByLabelText("Board");
     expect(fakeContext.fillStyle).toBe("#0083C7");
 
-    webSocket.dispatchEvent(
+    webSocketRef.current?.dispatchEvent(
       new MessageEvent("message", {
         data: JSON.stringify({
           type: "DRAW",
@@ -192,10 +207,10 @@ describe("Board", () => {
     fireEvent.pointerDown(canvas, { clientX: 2 * 16 + 1, clientY: 3 * 16 + 1 });
     fireEvent.pointerMove(canvas, { clientX: 3 * 16 + 1, clientY: 3 * 16 + 1 });
 
-    expect(webSocket.send).toHaveBeenCalledWith(
+    expect(sharedSend).toHaveBeenCalledWith(
       JSON.stringify({ type: "DRAW", x: 2, y: 3, color: "#FFFFFF" }),
     );
-    expect(webSocket.send).toHaveBeenCalledWith(
+    expect(sharedSend).toHaveBeenCalledWith(
       JSON.stringify({ type: "DRAW", x: 3, y: 3, color: "#FFFFFF" }),
     );
   });
@@ -238,10 +253,10 @@ describe("Board", () => {
       pointerType: "touch",
     });
 
-    expect(webSocket.send).toHaveBeenCalledWith(
+    expect(sharedSend).toHaveBeenCalledWith(
       JSON.stringify({ type: "DRAW", x: 2, y: 3, color: "#FFFFFF" }),
     );
-    expect(webSocket.send).toHaveBeenCalledWith(
+    expect(sharedSend).toHaveBeenCalledWith(
       JSON.stringify({ type: "DRAW", x: 3, y: 3, color: "#FFFFFF" }),
     );
 
@@ -256,7 +271,7 @@ describe("Board", () => {
       pointerType: "touch",
     });
 
-    expect(webSocket.send).not.toHaveBeenCalledWith(
+    expect(sharedSend).not.toHaveBeenCalledWith(
       JSON.stringify({ type: "DRAW", x: 4, y: 3, color: "#FFFFFF" }),
     );
 
@@ -268,7 +283,7 @@ describe("Board", () => {
     });
     fireEvent(canvas, penDown);
     expect(penDown.defaultPrevented).toBe(true);
-    expect(webSocket.send).toHaveBeenCalledWith(
+    expect(sharedSend).toHaveBeenCalledWith(
       JSON.stringify({ type: "DRAW", x: 5, y: 3, color: "#FFFFFF" }),
     );
   });
@@ -316,7 +331,7 @@ describe("Board", () => {
     const canvas = screen.getByLabelText<HTMLCanvasElement>("Board");
     fireEvent.pointerDown(canvas, { clientX: 1, clientY: 1 });
 
-    expect(webSocket.send).toHaveBeenCalledWith(
+    expect(sharedSend).toHaveBeenCalledWith(
       JSON.stringify({ type: "DRAW", x: 0, y: 0, color: "#E50000" }),
     );
   });
@@ -333,15 +348,137 @@ describe("Board", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Reset" }));
 
-    expect(webSocket.send).toHaveBeenCalledWith(
-      JSON.stringify({ type: "RESET" }),
-    );
-    webSocket.dispatchEvent(
+    expect(sharedSend).toHaveBeenCalledWith(JSON.stringify({ type: "RESET" }));
+    webSocketRef.current?.dispatchEvent(
       new MessageEvent("message", { data: JSON.stringify({ type: "RESET" }) }),
     );
 
     await waitFor(() => {
       expect(fakeContext.fillStyle).toBe("#2B2B2B");
     });
+  });
+
+  it("reconnects, re-fetches the Board, and replays buffered messages after reconnect", async () => {
+    const initialBoard = createBlankBoard();
+    initialBoard[BOARD_SIZE - 1][BOARD_SIZE - 1] = "#FFFFFF";
+    const reconnectedBoard = createBlankBoard();
+    reconnectedBoard[BOARD_SIZE - 1][BOARD_SIZE - 1] = "#E50000";
+
+    let resolveFirstFetch: ((value: Response) => void) | undefined;
+    const firstFetch = new Promise<Response>((resolve) => {
+      resolveFirstFetch = resolve;
+    });
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => firstFetch);
+    FakeWebSocketClass.autoOpen = false;
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(["board"], createBlankBoard());
+
+    renderBoard(queryClient);
+
+    // First connection - open, snapshot loads
+    webSocketRef.current?.open();
+    await waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/board");
+    });
+
+    if (!resolveFirstFetch) {
+      throw new Error("The first Board snapshot resolver was not initialized.");
+    }
+    resolveFirstFetch(Response.json(initialBoard));
+    await screen.findByLabelText("Board");
+    // The last cell drawn (BOARD_SIZE-1, BOARD_SIZE-1) has #FFFFFF from initialBoard
+    expect(fakeContext.fillStyle).toBe("#FFFFFF");
+
+    // Now simulate disconnect + reconnect
+    webSocketRef.current?.close();
+    if (webSocketRef.current) {
+      webSocketRef.current.readyState = FakeWebSocketClass.CONNECTING;
+    }
+
+    // Set up second fetch for the reconnection
+    let resolveSecondFetch: ((value: Response) => void) | undefined;
+    const secondFetch = new Promise<Response>((resolve) => {
+      resolveSecondFetch = resolve;
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => secondFetch);
+
+    // Reconnect
+    webSocketRef.current?.open();
+
+    await waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/board");
+    });
+
+    // Simulate a message that arrived while re-hydrating after reconnect
+    webSocketRef.current?.dispatchEvent(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "DRAW",
+          x: BOARD_SIZE - 1,
+          y: BOARD_SIZE - 1,
+          color: "#E50000",
+        }),
+      }),
+    );
+
+    if (!resolveSecondFetch) {
+      throw new Error(
+        "The second Board snapshot resolver was not initialized.",
+      );
+    }
+    resolveSecondFetch(Response.json(reconnectedBoard));
+
+    await waitFor(() => {
+      expect(fakeContext.fillStyle).toBe("#E50000");
+    });
+  });
+
+  it("sends draws while the socket is disconnected — partysocket handles buffering", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json(createBlankBoard()),
+    );
+    const bounds = {
+      bottom: CANVAS_SIZE,
+      height: CANVAS_SIZE,
+      left: 0,
+      right: CANVAS_SIZE,
+      top: 0,
+      width: CANVAS_SIZE,
+      x: 0,
+      y: 0,
+      toJSON: () => "",
+    };
+    vi.spyOn(
+      HTMLCanvasElement.prototype,
+      "getBoundingClientRect",
+    ).mockReturnValue(bounds);
+
+    renderBoard();
+
+    const canvas = await screen.findByLabelText<HTMLCanvasElement>("Board");
+
+    // Draw at a known location — same pattern as the DRAW test above
+    fireEvent.pointerDown(canvas, { clientX: 2 * 16 + 1, clientY: 3 * 16 + 1 });
+
+    expect(sharedSend).toHaveBeenCalledWith(
+      JSON.stringify({ type: "DRAW", x: 2, y: 3, color: "#FFFFFF" }),
+    );
+
+    // Simulate disconnection
+    const callsBeforeDisconnect = sharedSend.mock.calls.length;
+    webSocketRef.current?.close();
+    if (webSocketRef.current) {
+      webSocketRef.current.readyState = FakeWebSocketClass.CONNECTING;
+    }
+
+    // Draw while disconnected
+    fireEvent.pointerDown(canvas, { clientX: 3 * 16 + 1, clientY: 3 * 16 + 1 });
+
+    // Send was still attempted
+    expect(sharedSend).toHaveBeenCalledTimes(callsBeforeDisconnect + 1);
+    expect(sharedSend).toHaveBeenCalledWith(
+      JSON.stringify({ type: "DRAW", x: 3, y: 3, color: "#FFFFFF" }),
+    );
   });
 });
