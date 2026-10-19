@@ -27,6 +27,13 @@ export function useLiveBoard() {
   const [board, setBoard] = useState<Board | null>(null);
   const [isSnapshotError, setIsSnapshotError] = useState(false);
   const socket = useRef<ReconnectingWebSocket | null>(null);
+  const hydrated = useRef(false);
+  // Messages to replay on top of the snapshot being loaded: broadcasts received
+  // meanwhile, plus this client's own Draws (the server does not echo those).
+  const bufferedMessages = useRef<BoardMessage[]>([]);
+  // Draws made while disconnected. They are flushed before the connection
+  // reopens, so the next snapshot may or may not include them.
+  const offlineDraws = useRef<DrawMessage[]>([]);
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -38,8 +45,6 @@ export function useLiveBoard() {
     // Each hydration (the first one and every one after a reconnect) gets its
     // own number, so a stale snapshot response can never overwrite a newer one.
     let hydration = 0;
-    let hydrated = false;
-    let bufferedMessages: BoardMessage[] = [];
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
 
     function loadSnapshot(currentHydration: number): void {
@@ -51,12 +56,12 @@ export function useLiveBoard() {
             if (currentHydration !== hydration) {
               return;
             }
-            const hydratedBoard = bufferedMessages.reduce(
+            const hydratedBoard = bufferedMessages.current.reduce(
               applyMessage,
               snapshot,
             );
-            bufferedMessages = [];
-            hydrated = true;
+            bufferedMessages.current = [];
+            hydrated.current = true;
             setIsSnapshotError(false);
             setBoard(hydratedBoard);
           },
@@ -75,8 +80,9 @@ export function useLiveBoard() {
 
     function hydrate(): void {
       hydration += 1;
-      hydrated = false;
-      bufferedMessages = [];
+      hydrated.current = false;
+      bufferedMessages.current = offlineDraws.current;
+      offlineDraws.current = [];
       clearTimeout(retryTimer);
       loadSnapshot(hydration);
     }
@@ -110,8 +116,8 @@ export function useLiveBoard() {
         return;
       }
 
-      if (!hydrated) {
-        bufferedMessages.push(message);
+      if (!hydrated.current) {
+        bufferedMessages.current.push(message);
         return;
       }
 
@@ -140,9 +146,15 @@ export function useLiveBoard() {
       currentBoard ? applyMessage(currentBoard, message) : currentBoard,
     );
 
-    // Messages sent while disconnected are buffered and flushed in order
-    // as soon as the connection is re-established.
-    socket.current?.send(JSON.stringify(message));
+    const webSocket = socket.current;
+    if (webSocket?.readyState !== ReconnectingWebSocket.OPEN) {
+      offlineDraws.current.push(message);
+    } else if (!hydrated.current) {
+      bufferedMessages.current.push(message);
+    }
+    // Messages sent while disconnected are buffered by the socket and flushed
+    // in order as soon as the connection is re-established.
+    webSocket?.send(JSON.stringify(message));
   }, []);
 
   const reset = useCallback(() => {

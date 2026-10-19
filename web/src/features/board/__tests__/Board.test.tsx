@@ -18,7 +18,7 @@ import {
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Board } from "../components/Board";
-import { CANVAS_SIZE } from "../utils/drawBoard";
+import { CANVAS_SIZE, CELL_SIZE } from "../utils/drawBoard";
 
 const fakeContext = {
   fillStyle: "",
@@ -27,6 +27,13 @@ const fakeContext = {
   fillRect: vi.fn(),
   strokeRect: vi.fn(),
 };
+
+/** The color each Cell was last painted with, keyed by "x,y". */
+const paintedCells = new Map<string, string>();
+
+function paintedCell(x: number, y: number): string | undefined {
+  return paintedCells.get(`${x},${y}`);
+}
 
 class FakeWebSocket extends EventTarget {
   static readonly CONNECTING = 0;
@@ -89,7 +96,14 @@ function renderBoard(queryClient = createQueryClient()) {
 }
 
 beforeEach(() => {
+  paintedCells.clear();
   fakeContext.fillRect.mockClear();
+  fakeContext.fillRect.mockImplementation((x: number, y: number) => {
+    paintedCells.set(
+      `${x / CELL_SIZE},${y / CELL_SIZE}`,
+      fakeContext.fillStyle,
+    );
+  });
   FakeWebSocket.autoOpen = true;
   webSockets = [];
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
@@ -444,6 +458,46 @@ describe("Board", () => {
         expect(fetchMock).toHaveBeenCalledTimes(2);
         expect(fakeContext.fillStyle).toBe("#E50000");
       });
+      // The snapshot predates the queued Draws, which must survive it.
+      expect(paintedCell(0, 0)).toBe("#FFFFFF");
+      expect(paintedCell(1, 0)).toBe("#FFFFFF");
+    });
+
+    it("keeps Draws made while the Board is being re-hydrated", async () => {
+      let resolveSnapshot: ((value: Response) => void) | undefined;
+      vi.spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(Response.json(createBlankBoard()))
+        .mockReturnValueOnce(
+          new Promise<Response>((resolve) => {
+            resolveSnapshot = resolve;
+          }),
+        );
+      vi.spyOn(
+        HTMLCanvasElement.prototype,
+        "getBoundingClientRect",
+      ).mockReturnValue(bounds);
+
+      renderBoard();
+      const canvas = await screen.findByLabelText<HTMLCanvasElement>("Board");
+
+      document.dispatchEvent(new Event("visibilitychange"));
+      await waitFor(() => {
+        expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+      });
+      fireEvent.pointerDown(canvas, { clientX: 1, clientY: 1 });
+      expect(paintedCell(0, 0)).toBe("#FFFFFF");
+      const paintsBeforeSnapshot = fakeContext.fillRect.mock.calls.length;
+      if (!resolveSnapshot) {
+        throw new Error("The Board snapshot resolver was not initialized.");
+      }
+      resolveSnapshot(Response.json(createBlankBoard()));
+
+      await waitFor(() => {
+        expect(fakeContext.fillRect.mock.calls.length).toBeGreaterThan(
+          paintsBeforeSnapshot,
+        );
+      });
+      expect(paintedCell(0, 0)).toBe("#FFFFFF");
     });
 
     it("does not reconnect after the Board is torn down", async () => {
