@@ -1,6 +1,7 @@
 import { BOARD_SIZE, createBlankBoard, Palette } from "@drawing-board/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   cleanup,
   createEvent,
   fireEvent,
@@ -9,6 +10,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Board } from "../components/Board";
 import { CANVAS_SIZE } from "../utils/drawBoard";
@@ -24,14 +26,20 @@ const fakeContext = {
 class FakeWebSocket extends EventTarget {
   static readonly CONNECTING = 0;
   static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
   static autoOpen = true;
+  static instances: FakeWebSocket[] = [];
 
   readonly send = vi.fn();
-  readonly close = vi.fn();
+  readonly close = vi.fn(() => {
+    this.readyState = FakeWebSocket.CLOSED;
+  });
   readyState = FakeWebSocket.CONNECTING;
 
   constructor(_url: string | URL) {
     super();
+    FakeWebSocket.instances.push(this);
     webSocket = this;
     if (FakeWebSocket.autoOpen) {
       queueMicrotask(() => this.open());
@@ -39,8 +47,17 @@ class FakeWebSocket extends EventTarget {
   }
 
   open() {
+    if (this.readyState !== FakeWebSocket.CONNECTING) {
+      return;
+    }
     this.readyState = FakeWebSocket.OPEN;
     this.dispatchEvent(new Event("open"));
+  }
+
+  /** Simulates an unexpected drop: the socket closes without a deliberate teardown. */
+  drop() {
+    this.readyState = FakeWebSocket.CLOSED;
+    this.dispatchEvent(new Event("close"));
   }
 }
 
@@ -53,16 +70,27 @@ function createQueryClient() {
 }
 
 function renderBoard(queryClient = createQueryClient()) {
-  render(
+  return render(
     <QueryClientProvider client={queryClient}>
       <Board />
     </QueryClientProvider>,
   );
 }
 
+function renderBoardInStrictMode(queryClient = createQueryClient()) {
+  return render(
+    <StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <Board />
+      </QueryClientProvider>
+    </StrictMode>,
+  );
+}
+
 beforeEach(() => {
   fakeContext.fillRect.mockClear();
   FakeWebSocket.autoOpen = true;
+  FakeWebSocket.instances = [];
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
     fakeContext as unknown as CanvasRenderingContext2D,
   );
@@ -98,14 +126,18 @@ describe("Board", () => {
     });
     vi.spyOn(globalThis, "fetch").mockReturnValue(snapshot);
     FakeWebSocket.autoOpen = false;
-    const queryClient = createQueryClient();
-    queryClient.setQueryData(["board"], createBlankBoard());
 
-    renderBoard(queryClient);
+    renderBoard();
 
+    await waitFor(() => {
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+    webSocket = FakeWebSocket.instances[0];
     expect(globalThis.fetch).not.toHaveBeenCalled();
     expect(screen.queryByLabelText("Board")).toBeNull();
-    webSocket.open();
+    act(() => {
+      webSocket.open();
+    });
     await waitFor(() => {
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/board");
     });
@@ -135,7 +167,10 @@ describe("Board", () => {
     if (!resolveSnapshot) {
       throw new Error("The Board snapshot resolver was not initialized.");
     }
-    resolveSnapshot(Response.json(createBlankBoard()));
+    const resolve = resolveSnapshot;
+    act(() => {
+      resolve(Response.json(createBlankBoard()));
+    });
 
     await screen.findByLabelText("Board");
     expect(fakeContext.fillStyle).toBe("#0083C7");
@@ -343,5 +378,178 @@ describe("Board", () => {
     await waitFor(() => {
       expect(fakeContext.fillStyle).toBe("#2B2B2B");
     });
+  });
+
+  it("reconnects and re-hydrates the Board after a dropped connection", async () => {
+    const drawnBoard = createBlankBoard();
+    drawnBoard[BOARD_SIZE - 1][BOARD_SIZE - 1] = "#E50000";
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json(createBlankBoard()))
+      .mockResolvedValueOnce(Response.json(drawnBoard));
+
+    renderBoard();
+
+    await screen.findByLabelText("Board");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      webSocket.drop();
+    });
+
+    // partysocket reconnects only after its initial backoff delay elapses.
+    await waitFor(
+      () => {
+        expect(FakeWebSocket.instances.length).toBeGreaterThan(1);
+      },
+      { timeout: 4000 },
+    );
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(fakeContext.fillStyle).toBe("#E50000");
+    });
+  });
+
+  it("re-hydrates a Board that changed while the tab was suspended", async () => {
+    const changedBoard = createBlankBoard();
+    changedBoard[BOARD_SIZE - 1][BOARD_SIZE - 1] = "#E50000";
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json(createBlankBoard()))
+      .mockResolvedValueOnce(Response.json(changedBoard));
+
+    renderBoard();
+
+    await screen.findByLabelText("Board");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fakeContext.fillStyle).toBe("#2B2B2B");
+
+    // jsdom reports "visible"; backgrounding then returning simulates a
+    // suspended tab whose Board moved on, and must re-fetch the snapshot.
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(fakeContext.fillStyle).toBe("#E50000");
+    });
+  });
+
+  it("applies a snapshot that changed while disconnected", async () => {
+    const changedBoard = createBlankBoard();
+    changedBoard[BOARD_SIZE - 1][BOARD_SIZE - 1] = "#E50000";
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json(createBlankBoard()))
+      .mockResolvedValueOnce(Response.json(changedBoard));
+
+    renderBoard();
+
+    await screen.findByLabelText("Board");
+    expect(fakeContext.fillStyle).toBe("#2B2B2B");
+
+    act(() => {
+      webSocket.drop();
+    });
+
+    await waitFor(
+      () => {
+        expect(FakeWebSocket.instances.length).toBeGreaterThan(1);
+      },
+      { timeout: 4000 },
+    );
+
+    // Even if no broadcast was missed, the snapshotted Draw is rendered.
+    await waitFor(() => {
+      expect(fakeContext.fillStyle).toBe("#E50000");
+    });
+  });
+
+  it("delivers Draws made while disconnected once reconnected", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json(createBlankBoard()),
+    );
+    vi.spyOn(
+      HTMLCanvasElement.prototype,
+      "getBoundingClientRect",
+    ).mockReturnValue({
+      bottom: CANVAS_SIZE,
+      height: CANVAS_SIZE,
+      left: 0,
+      right: CANVAS_SIZE,
+      top: 0,
+      width: CANVAS_SIZE,
+      x: 0,
+      y: 0,
+      toJSON: () => "",
+    });
+
+    renderBoard();
+
+    const canvas = await screen.findByLabelText<HTMLCanvasElement>("Board");
+    act(() => {
+      webSocket.drop();
+    });
+
+    // Drawn while the connection is down: partysocket buffers the message.
+    fireEvent.pointerDown(canvas, { clientX: 2 * 16 + 1, clientY: 3 * 16 + 1 });
+
+    await waitFor(
+      () => {
+        expect(FakeWebSocket.instances.length).toBeGreaterThan(1);
+      },
+      { timeout: 4000 },
+    );
+    const reconnected = FakeWebSocket.instances.at(-1);
+    if (!reconnected) {
+      throw new Error("The reconnected WebSocket was not created.");
+    }
+
+    await waitFor(() => {
+      expect(reconnected.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: "DRAW", x: 2, y: 3, color: "#FFFFFF" }),
+      );
+    });
+  });
+
+  it("does not reconnect after an unmount", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json(createBlankBoard()),
+    );
+
+    const view = renderBoard();
+
+    await screen.findByLabelText("Board");
+    const { close } = webSocket;
+    const socketsBeforeUnmount = FakeWebSocket.instances.length;
+
+    view.unmount();
+
+    expect(close).toHaveBeenCalled();
+    // Give any pending partysocket backoff a chance to fire a reconnect.
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+    expect(FakeWebSocket.instances).toHaveLength(socketsBeforeUnmount);
+  });
+
+  it("guards against duplicate sockets under StrictMode", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json(createBlankBoard()),
+    );
+
+    renderBoardInStrictMode();
+
+    await screen.findByLabelText("Board");
+    // The StrictMode double-invoke remounts the effect; exactly one socket
+    // remains open, and the live connection is the one exposed to the UI.
+    const openSockets = FakeWebSocket.instances.filter(
+      (instance) => instance.readyState === FakeWebSocket.OPEN,
+    );
+    expect(openSockets).toHaveLength(1);
+    expect(openSockets[0]).toBe(FakeWebSocket.instances.at(-1));
   });
 });

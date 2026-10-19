@@ -46,6 +46,7 @@ A lightweight, zero-auth real-time collaborative pixel board. Anyone who opens t
 8. **Reset:** A Reset button sets every Cell to the Blank color for everyone. Any visitor can press it, with no confirmation dialog. `BoardDO` clears and persists the Board, then broadcasts `RESET` to all connected clients, including the sender.
 9. **Persistence across hibernation and reloads:** The Board survives Durable Object hibernation, eviction, and page reloads. A reloaded client re-fetches the Board from `GET /api/board`.
 10. **Deployment:** The app can be built and deployed as a single Worker serving the frontend and the API.
+11. **Reconnection and re-hydration:** After an unexpected WebSocket drop (phone sleep, suspend, network blip, or a deploy), the client reconnects automatically with backoff and re-fetches the Board snapshot so the Canvas shows the server-authoritative Board. Draws and Resets made while disconnected are delivered in order once the connection returns. Returning to a suspended tab recovers the Board via `visibilitychange`/`pageshow`. A deliberate teardown does not reconnect.
 
 ### 3.2 Messages
 
@@ -70,6 +71,6 @@ Server to client (broadcast):
 * External databases or storage services (D1, R2, KV)
 * Anti-griefing cooldown timers, rate limiting, or access control on Reset
 * Smooth vector/Bresenham line interpolation
-* Automatic WebSocket reconnection (a page reload recovers)
+* An app-level ping/pong heartbeat for detecting a silently-dead socket that still reports `OPEN` (possible follow-up; returning to a suspended tab already re-hydrates)
 * Multiple Boards
 * Free color picker
