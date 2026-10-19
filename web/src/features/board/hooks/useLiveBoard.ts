@@ -8,6 +8,7 @@ import {
   type ResetMessage,
 } from "@drawing-board/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import ReconnectingWebSocket from "partysocket/ws";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchBoard } from "../api/fetchBoard";
 
@@ -25,8 +26,7 @@ export function useLiveBoard() {
   const [webSocketStarted, setWebSocketStarted] = useState(false);
   const hydrated = useRef(false);
   const bufferedMessages = useRef<BoardMessage[]>([]);
-  const socket = useRef<WebSocket | null>(null);
-  const queuedMessages = useRef<string[]>([]);
+  const socket = useRef<ReconnectingWebSocket | null>(null);
   const queryClient = useQueryClient();
 
   const { data: snapshot, isError } = useQuery({
@@ -36,19 +36,23 @@ export function useLiveBoard() {
   });
 
   useEffect(() => {
+    let active = true;
     const webSocketUrl = new URL("/ws", window.location.href);
     webSocketUrl.protocol = webSocketUrl.protocol === "https:" ? "wss:" : "ws:";
-    const webSocket = new WebSocket(webSocketUrl);
+    const webSocket = new ReconnectingWebSocket(webSocketUrl.toString());
     socket.current = webSocket;
 
-    webSocket.addEventListener("open", () => {
+    function beginHydration() {
+      if (!active) {
+        return;
+      }
+      hydrated.current = false;
+      bufferedMessages.current = [];
       queryClient.removeQueries({ queryKey: ["board"] });
       setWebSocketStarted(true);
-      for (const message of queuedMessages.current) {
-        webSocket.send(message);
-      }
-      queuedMessages.current = [];
-    });
+    }
+
+    webSocket.addEventListener("open", beginHydration);
 
     webSocket.addEventListener("message", (event) => {
       const message = parseBoardMessage(event.data);
@@ -66,13 +70,42 @@ export function useLiveBoard() {
       );
     });
 
+    function syncOnVisible() {
+      if (
+        !active ||
+        webSocket.readyState !== ReconnectingWebSocket.OPEN ||
+        document.visibilityState !== "visible"
+      ) {
+        return;
+      }
+      beginHydration();
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        syncOnVisible();
+      }
+    }
+
+    function onPageShow(event: PageTransitionEvent) {
+      if (event.persisted) {
+        syncOnVisible();
+      }
+    }
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("pageshow", onPageShow);
+
     return () => {
+      active = false;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pageshow", onPageShow);
       webSocket.close();
       if (socket.current === webSocket) {
         socket.current = null;
       }
     };
-  }, [queryClient.removeQueries]);
+  }, [queryClient]);
 
   useEffect(() => {
     if (!webSocketStarted || !snapshot || hydrated.current) {
@@ -93,23 +126,15 @@ export function useLiveBoard() {
       currentBoard ? applyMessage(currentBoard, message) : currentBoard,
     );
 
-    const serializedDraw = JSON.stringify(message);
-    if (socket.current?.readyState === WebSocket.OPEN) {
-      socket.current.send(serializedDraw);
-    } else {
-      queuedMessages.current.push(serializedDraw);
-    }
+    socket.current?.send(JSON.stringify(message));
   }, []);
 
   const reset = useCallback(() => {
-    const serializedReset = JSON.stringify({
-      type: "RESET",
-    } satisfies ResetMessage);
-    if (socket.current?.readyState === WebSocket.OPEN) {
-      socket.current.send(serializedReset);
-    } else {
-      queuedMessages.current.push(serializedReset);
-    }
+    socket.current?.send(
+      JSON.stringify({
+        type: "RESET",
+      } satisfies ResetMessage),
+    );
   }, []);
 
   return { board, draw, reset, isError };
