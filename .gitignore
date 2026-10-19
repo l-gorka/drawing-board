@@ -1,5 +1,7 @@
 node_modules
 dist
+.harness/
 .wrangler
 .dev.vars
 *.log
+.env*

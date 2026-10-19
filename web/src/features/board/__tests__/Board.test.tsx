@@ -24,10 +24,12 @@ const fakeContext = {
 class FakeWebSocket extends EventTarget {
   static readonly CONNECTING = 0;
   static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
   static autoOpen = true;
 
   readonly send = vi.fn();
-  readonly close = vi.fn();
+  readonly close = vi.fn(() => this.drop());
   readyState = FakeWebSocket.CONNECTING;
 
   constructor(_url: string | URL) {
@@ -42,9 +44,21 @@ class FakeWebSocket extends EventTarget {
     this.readyState = FakeWebSocket.OPEN;
     this.dispatchEvent(new Event("open"));
   }
+
+  drop() {
+    this.readyState = FakeWebSocket.CLOSED;
+    this.dispatchEvent(new Event("close"));
+  }
 }
 
-let webSocket: FakeWebSocket;
+let webSocket: FakeWebSocket | null = null;
+
+function currentWebSocket(): FakeWebSocket {
+  if (!webSocket) {
+    throw new Error("Expected a WebSocket connection.");
+  }
+  return webSocket;
+}
 
 function createQueryClient() {
   return new QueryClient({
@@ -63,6 +77,7 @@ function renderBoard(queryClient = createQueryClient()) {
 beforeEach(() => {
   fakeContext.fillRect.mockClear();
   FakeWebSocket.autoOpen = true;
+  webSocket = null;
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
     fakeContext as unknown as CanvasRenderingContext2D,
   );
@@ -71,6 +86,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -88,7 +104,11 @@ describe("Board", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/board");
     expect(canvas.width).toBe(CANVAS_SIZE);
     expect(canvas.height).toBe(CANVAS_SIZE);
-    expect(fakeContext.fillRect).toHaveBeenCalledTimes(BOARD_SIZE * BOARD_SIZE);
+    await waitFor(() => {
+      expect(fakeContext.fillRect).toHaveBeenCalledTimes(
+        BOARD_SIZE * BOARD_SIZE,
+      );
+    });
   });
 
   it("replays messages received while the Board snapshot loads", async () => {
@@ -105,11 +125,15 @@ describe("Board", () => {
 
     expect(globalThis.fetch).not.toHaveBeenCalled();
     expect(screen.queryByLabelText("Board")).toBeNull();
-    webSocket.open();
+    await Promise.resolve();
+    await waitFor(() => {
+      expect(webSocket).not.toBeNull();
+    });
+    currentWebSocket().open();
     await waitFor(() => {
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/board");
     });
-    webSocket.dispatchEvent(
+    currentWebSocket().dispatchEvent(
       new MessageEvent("message", {
         data: JSON.stringify({
           type: "DRAW",
@@ -119,10 +143,10 @@ describe("Board", () => {
         }),
       }),
     );
-    webSocket.dispatchEvent(
+    currentWebSocket().dispatchEvent(
       new MessageEvent("message", { data: JSON.stringify({ type: "RESET" }) }),
     );
-    webSocket.dispatchEvent(
+    currentWebSocket().dispatchEvent(
       new MessageEvent("message", {
         data: JSON.stringify({
           type: "DRAW",
@@ -140,7 +164,7 @@ describe("Board", () => {
     await screen.findByLabelText("Board");
     expect(fakeContext.fillStyle).toBe("#0083C7");
 
-    webSocket.dispatchEvent(
+    currentWebSocket().dispatchEvent(
       new MessageEvent("message", {
         data: JSON.stringify({
           type: "DRAW",
@@ -153,6 +177,75 @@ describe("Board", () => {
 
     await waitFor(() => {
       expect(fakeContext.fillStyle).toBe("#02BE01");
+    });
+  });
+
+  it("reconnects and rehydrates the Board after a dropped connection", async () => {
+    let resolveReconnectedSnapshot: ((value: Response) => void) | undefined;
+    const reconnectedSnapshot = new Promise<Response>((resolve) => {
+      resolveReconnectedSnapshot = resolve;
+    });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json(createBlankBoard()))
+      .mockReturnValueOnce(reconnectedSnapshot);
+    vi.spyOn(
+      HTMLCanvasElement.prototype,
+      "getBoundingClientRect",
+    ).mockReturnValue({
+      bottom: CANVAS_SIZE,
+      height: CANVAS_SIZE,
+      left: 0,
+      right: CANVAS_SIZE,
+      top: 0,
+      width: CANVAS_SIZE,
+      x: 0,
+      y: 0,
+      toJSON: () => "",
+    });
+
+    renderBoard();
+
+    const canvas = await screen.findByLabelText("Board");
+    const initialSocket = currentWebSocket();
+    vi.useFakeTimers();
+    initialSocket.drop();
+    fireEvent.pointerDown(canvas, { clientX: 1, clientY: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    await vi.advanceTimersByTimeAsync(10_000);
+    await Promise.resolve();
+    vi.useRealTimers();
+
+    const reconnectedSocket = currentWebSocket();
+    expect(reconnectedSocket).not.toBe(initialSocket);
+    expect(reconnectedSocket.send).toHaveBeenNthCalledWith(
+      1,
+      JSON.stringify({ type: "DRAW", x: 0, y: 0, color: "#FFFFFF" }),
+    );
+    expect(reconnectedSocket.send).toHaveBeenNthCalledWith(
+      2,
+      JSON.stringify({ type: "RESET" }),
+    );
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+    reconnectedSocket.dispatchEvent(
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "DRAW",
+          x: BOARD_SIZE - 1,
+          y: BOARD_SIZE - 1,
+          color: "#E50000",
+        }),
+      }),
+    );
+    if (!resolveReconnectedSnapshot) {
+      throw new Error("The reconnected snapshot resolver was not initialized.");
+    }
+    resolveReconnectedSnapshot(Response.json(createBlankBoard()));
+
+    await waitFor(() => {
+      expect(fakeContext.fillStyle).toBe("#E50000");
     });
   });
 
@@ -192,10 +285,10 @@ describe("Board", () => {
     fireEvent.pointerDown(canvas, { clientX: 2 * 16 + 1, clientY: 3 * 16 + 1 });
     fireEvent.pointerMove(canvas, { clientX: 3 * 16 + 1, clientY: 3 * 16 + 1 });
 
-    expect(webSocket.send).toHaveBeenCalledWith(
+    expect(currentWebSocket().send).toHaveBeenCalledWith(
       JSON.stringify({ type: "DRAW", x: 2, y: 3, color: "#FFFFFF" }),
     );
-    expect(webSocket.send).toHaveBeenCalledWith(
+    expect(currentWebSocket().send).toHaveBeenCalledWith(
       JSON.stringify({ type: "DRAW", x: 3, y: 3, color: "#FFFFFF" }),
     );
   });
@@ -238,10 +331,10 @@ describe("Board", () => {
       pointerType: "touch",
     });
 
-    expect(webSocket.send).toHaveBeenCalledWith(
+    expect(currentWebSocket().send).toHaveBeenCalledWith(
       JSON.stringify({ type: "DRAW", x: 2, y: 3, color: "#FFFFFF" }),
     );
-    expect(webSocket.send).toHaveBeenCalledWith(
+    expect(currentWebSocket().send).toHaveBeenCalledWith(
       JSON.stringify({ type: "DRAW", x: 3, y: 3, color: "#FFFFFF" }),
     );
 
@@ -256,7 +349,7 @@ describe("Board", () => {
       pointerType: "touch",
     });
 
-    expect(webSocket.send).not.toHaveBeenCalledWith(
+    expect(currentWebSocket().send).not.toHaveBeenCalledWith(
       JSON.stringify({ type: "DRAW", x: 4, y: 3, color: "#FFFFFF" }),
     );
 
@@ -268,7 +361,7 @@ describe("Board", () => {
     });
     fireEvent(canvas, penDown);
     expect(penDown.defaultPrevented).toBe(true);
-    expect(webSocket.send).toHaveBeenCalledWith(
+    expect(currentWebSocket().send).toHaveBeenCalledWith(
       JSON.stringify({ type: "DRAW", x: 5, y: 3, color: "#FFFFFF" }),
     );
   });
@@ -316,7 +409,7 @@ describe("Board", () => {
     const canvas = screen.getByLabelText<HTMLCanvasElement>("Board");
     fireEvent.pointerDown(canvas, { clientX: 1, clientY: 1 });
 
-    expect(webSocket.send).toHaveBeenCalledWith(
+    expect(currentWebSocket().send).toHaveBeenCalledWith(
       JSON.stringify({ type: "DRAW", x: 0, y: 0, color: "#E50000" }),
     );
   });
@@ -333,10 +426,10 @@ describe("Board", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Reset" }));
 
-    expect(webSocket.send).toHaveBeenCalledWith(
+    expect(currentWebSocket().send).toHaveBeenCalledWith(
       JSON.stringify({ type: "RESET" }),
     );
-    webSocket.dispatchEvent(
+    currentWebSocket().dispatchEvent(
       new MessageEvent("message", { data: JSON.stringify({ type: "RESET" }) }),
     );
 

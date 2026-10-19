@@ -56,7 +56,7 @@ Client to server:
 
 Server to client (broadcast):
 
-* `{ "type": "DRAW", "x": number, "y": number, "color": string }`: sent to all clients except the sender
+* `{ "type": "DRAW", "x": number, "y": number, "color": string }`: sent to all connected clients, including the sender
 * `{ "type": "RESET" }`: sent to all clients
 
 ### 3.3 HTTP API
@@ -70,6 +70,7 @@ Server to client (broadcast):
 * External databases or storage services (D1, R2, KV)
 * Anti-griefing cooldown timers, rate limiting, or access control on Reset
 * Smooth vector/Bresenham line interpolation
-* Automatic WebSocket reconnection (a page reload recovers)
+* Application-level WebSocket ping/pong heartbeats for detecting a connection
+  that still reports as open but cannot send or receive data
 * Multiple Boards
 * Free color picker

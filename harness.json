@@ -1,0 +1,17 @@
+{
+  "baseBranch": "main",
+  "branchType": "feature",
+  "testCommands": [
+    "bun run --cwd shared test",
+    "bun run --cwd server test",
+    "bun run --cwd web test"
+  ],
+  "maxTestFixAttempts": 3,
+  "models": {
+    "triage": "composer-2.5",
+    "easy": "composer-2.5",
+    "plan": "composer-2.5",
+    "execute": "composer-2.5",
+    "review": "composer-2.5"
+  }
+}
