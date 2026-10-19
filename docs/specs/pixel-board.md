@@ -45,7 +45,8 @@ A lightweight, zero-auth real-time collaborative pixel board. Anyone who opens t
 7. **Palette:** Participants choose from a fixed Palette (16 colors, defined once in `shared/`). The Blank color (dark gray) is part of the Palette and acts as the eraser. There is no free color picker.
 8. **Reset:** A Reset button sets every Cell to the Blank color for everyone. Any visitor can press it, with no confirmation dialog. `BoardDO` clears and persists the Board, then broadcasts `RESET` to all connected clients, including the sender.
 9. **Persistence across hibernation and reloads:** The Board survives Durable Object hibernation, eviction, and page reloads. A reloaded client re-fetches the Board from `GET /api/board`.
-10. **Deployment:** The app can be built and deployed as a single Worker serving the frontend and the API.
+10. **Reconnection and resync:** When the WebSocket connection drops (device sleep, network blip, deploy), the client reconnects automatically with backoff, re-fetches the Board from `GET /api/board`, and replays messages received during the fetch on top of the snapshot. Draws and Resets made while disconnected are delivered in order once the connection is re-established. Returning to a suspended tab also re-fetches the Board.
+11. **Deployment:** The app can be built and deployed as a single Worker serving the frontend and the API.
 
 ### 3.2 Messages
 
@@ -70,6 +71,6 @@ Server to client (broadcast):
 * External databases or storage services (D1, R2, KV)
 * Anti-griefing cooldown timers, rate limiting, or access control on Reset
 * Smooth vector/Bresenham line interpolation
-* Automatic WebSocket reconnection (a page reload recovers)
+* An app-level ping/pong heartbeat to detect a silently dead WebSocket that still reports `OPEN`
 * Multiple Boards
 * Free color picker
