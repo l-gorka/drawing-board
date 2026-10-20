@@ -249,6 +249,30 @@ describe("Board", () => {
     });
   });
 
+  it("shows a loading spinner while the Board loads", async () => {
+    let resolveSnapshot: ((value: Response) => void) | undefined;
+    const snapshot = new Promise<Response>((resolve) => {
+      resolveSnapshot = resolve;
+    });
+    vi.spyOn(globalThis, "fetch").mockReturnValue(snapshot);
+
+    renderBoard();
+
+    const loading = screen.getByRole("status", { name: /loading the board/i });
+    expect(loading.getAttribute("aria-busy")).toBe("true");
+    expect(screen.getByText("Loading the Board…")).toBeTruthy();
+    expect(document.querySelector(".board-loading-spinner")).toBeTruthy();
+    expect(screen.queryByLabelText("Board")).toBeNull();
+
+    if (!resolveSnapshot) {
+      throw new Error("The Board snapshot resolver was not initialized.");
+    }
+    resolveSnapshot(Response.json(createBlankBoard()));
+
+    await screen.findByLabelText("Board");
+    expect(screen.queryByRole("status", { name: /loading the board/i })).toBeNull();
+  });
+
   it("shows an error message when the Board cannot be loaded", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("nope", { status: 500 }),
@@ -257,6 +281,7 @@ describe("Board", () => {
     renderBoard();
 
     expect(await screen.findByText("Could not load the Board.")).toBeTruthy();
+    expect(screen.queryByRole("status", { name: /loading the board/i })).toBeNull();
   });
 
   it("sends DRAW messages when clicking and dragging across Cells", async () => {

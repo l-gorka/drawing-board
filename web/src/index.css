@@ -14,6 +14,28 @@ body {
   width: fit-content;
 }
 
+.board-loading-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  width: 32rem;
+  height: 32rem;
+}
+
+.board-loading-spinner {
+  width: 2.5rem;
+  height: 2.5rem;
+  animation: board-loading-spin 0.8s linear infinite;
+}
+
+@keyframes board-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .palette {
   display: grid;
   grid-template-columns: repeat(8, 1.5rem);
