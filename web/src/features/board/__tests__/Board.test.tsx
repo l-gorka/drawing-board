@@ -30,10 +30,12 @@ class FakeWebSocket extends EventTarget {
 
   readonly send = vi.fn();
   readonly close = vi.fn(() => this.drop());
+  readonly url: string;
   readyState = FakeWebSocket.CONNECTING;
 
-  constructor(_url: string | URL) {
+  constructor(url: string | URL) {
     super();
+    this.url = String(url);
     webSocket = this;
     if (FakeWebSocket.autoOpen) {
       queueMicrotask(() => this.open());
@@ -66,6 +68,42 @@ function createQueryClient() {
   });
 }
 
+const defaultBoardCatalog = {
+  boards: [{ id: "main", name: "Main" }],
+};
+
+function mockBoardFetch(
+  board = createBlankBoard(),
+  boards = defaultBoardCatalog.boards,
+) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof Request
+          ? input.url
+          : String(input);
+
+    if (url === "/api/boards" && init?.method === "POST") {
+      const body = JSON.parse(String(init.body)) as { name: string };
+      const created = { id: "board-b", name: body.name };
+      return Promise.resolve(
+        Response.json(created, { status: 201, statusText: "Created" }),
+      );
+    }
+
+    if (url === "/api/boards") {
+      return Promise.resolve(Response.json({ boards }));
+    }
+
+    if (url.startsWith("/api/board/")) {
+      return Promise.resolve(Response.json(board));
+    }
+
+    throw new Error(`Unexpected fetch: ${url}`);
+  });
+}
+
 function renderBoard(queryClient = createQueryClient()) {
   render(
     <QueryClientProvider client={queryClient}>
@@ -92,16 +130,16 @@ afterEach(() => {
 });
 
 describe("Board", () => {
-  it("loads the Board from /api/board and renders it on a Canvas", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(Response.json(createBlankBoard()));
+  it("loads the Board from /api/board/main and renders it on a Canvas", async () => {
+    const fetchMock = mockBoardFetch();
 
     renderBoard();
 
     const canvas = await screen.findByLabelText<HTMLCanvasElement>("Board");
 
-    expect(fetchMock).toHaveBeenCalledWith("/api/board");
+    expect(fetchMock).toHaveBeenCalledWith("/api/boards");
+    expect(fetchMock).toHaveBeenCalledWith("/api/board/main");
+    expect(currentWebSocket().url).toContain("/ws/main");
     expect(canvas.width).toBe(CANVAS_SIZE);
     expect(canvas.height).toBe(CANVAS_SIZE);
     await waitFor(() => {
@@ -116,14 +154,26 @@ describe("Board", () => {
     const snapshot = new Promise<Response>((resolve) => {
       resolveSnapshot = resolve;
     });
-    vi.spyOn(globalThis, "fetch").mockReturnValue(snapshot);
+    mockBoardFetch().mockImplementation((input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof Request
+            ? input.url
+            : String(input);
+      if (url === "/api/boards") {
+        return Promise.resolve(Response.json(defaultBoardCatalog));
+      }
+      if (url.startsWith("/api/board/")) {
+        return snapshot;
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
     FakeWebSocket.autoOpen = false;
-    const queryClient = createQueryClient();
-    queryClient.setQueryData(["board"], createBlankBoard());
 
-    renderBoard(queryClient);
+    renderBoard();
 
-    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(globalThis.fetch).not.toHaveBeenCalledWith("/api/board/main");
     expect(screen.queryByLabelText("Board")).toBeNull();
     await Promise.resolve();
     await waitFor(() => {
@@ -131,7 +181,7 @@ describe("Board", () => {
     });
     currentWebSocket().open();
     await waitFor(() => {
-      expect(globalThis.fetch).toHaveBeenCalledWith("/api/board");
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/board/main");
     });
     currentWebSocket().dispatchEvent(
       new MessageEvent("message", {
@@ -185,10 +235,27 @@ describe("Board", () => {
     const reconnectedSnapshot = new Promise<Response>((resolve) => {
       resolveReconnectedSnapshot = resolve;
     });
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(Response.json(createBlankBoard()))
-      .mockReturnValueOnce(reconnectedSnapshot);
+    let boardSnapshotCount = 0;
+    const fetchMock = mockBoardFetch();
+    fetchMock.mockImplementation((input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof Request
+            ? input.url
+            : String(input);
+      if (url === "/api/boards") {
+        return Promise.resolve(Response.json(defaultBoardCatalog));
+      }
+      if (url.startsWith("/api/board/")) {
+        boardSnapshotCount += 1;
+        if (boardSnapshotCount === 1) {
+          return Promise.resolve(Response.json(createBlankBoard()));
+        }
+        return reconnectedSnapshot;
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
     vi.spyOn(
       HTMLCanvasElement.prototype,
       "getBoundingClientRect",
@@ -227,7 +294,8 @@ describe("Board", () => {
       JSON.stringify({ type: "RESET" }),
     );
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledWith("/api/board/main");
+      expect(boardSnapshotCount).toBe(2);
     });
     reconnectedSocket.dispatchEvent(
       new MessageEvent("message", {
@@ -254,7 +322,21 @@ describe("Board", () => {
     const snapshot = new Promise<Response>((resolve) => {
       resolveSnapshot = resolve;
     });
-    vi.spyOn(globalThis, "fetch").mockReturnValue(snapshot);
+    mockBoardFetch().mockImplementation((input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof Request
+            ? input.url
+            : String(input);
+      if (url === "/api/boards") {
+        return Promise.resolve(Response.json(defaultBoardCatalog));
+      }
+      if (url.startsWith("/api/board/")) {
+        return snapshot;
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
 
     renderBoard();
 
@@ -274,9 +356,18 @@ describe("Board", () => {
   });
 
   it("shows an error message when the Board cannot be loaded", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("nope", { status: 500 }),
-    );
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof Request
+            ? input.url
+            : String(input);
+      if (url === "/api/boards") {
+        return Promise.resolve(Response.json(defaultBoardCatalog));
+      }
+      return Promise.resolve(new Response("nope", { status: 500 }));
+    });
 
     renderBoard();
 
@@ -285,9 +376,7 @@ describe("Board", () => {
   });
 
   it("sends DRAW messages when clicking and dragging across Cells", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json(createBlankBoard()),
-    );
+    mockBoardFetch();
     const bounds = {
       bottom: CANVAS_SIZE,
       height: CANVAS_SIZE,
@@ -319,9 +408,7 @@ describe("Board", () => {
   });
 
   it("sends DRAW messages for touch taps and drags", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json(createBlankBoard()),
-    );
+    mockBoardFetch();
     vi.spyOn(
       HTMLCanvasElement.prototype,
       "getBoundingClientRect",
@@ -392,9 +479,7 @@ describe("Board", () => {
   });
 
   it("draws with the selected Palette color", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json(createBlankBoard()),
-    );
+    mockBoardFetch();
     vi.spyOn(
       HTMLCanvasElement.prototype,
       "getBoundingClientRect",
@@ -442,7 +527,7 @@ describe("Board", () => {
   it("sends RESET and renders the Reset broadcast", async () => {
     const drawnBoard = createBlankBoard();
     drawnBoard[BOARD_SIZE - 1][BOARD_SIZE - 1] = "#E50000";
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(drawnBoard));
+    mockBoardFetch(drawnBoard);
 
     renderBoard();
 
@@ -460,6 +545,85 @@ describe("Board", () => {
 
     await waitFor(() => {
       expect(fakeContext.fillStyle).toBe("#2B2B2B");
+    });
+  });
+
+  it("shows the active board name from the catalog", async () => {
+    mockBoardFetch();
+
+    renderBoard();
+
+    expect(await screen.findByText("Main", { exact: false })).toBeTruthy();
+  });
+
+  it("switches boards and reconnects to the selected board", async () => {
+    const secondBoard = createBlankBoard();
+    secondBoard[BOARD_SIZE - 1][BOARD_SIZE - 1] = "#E50000";
+    const boards = [
+      { id: "main", name: "Main" },
+      { id: "board-b", name: "Second" },
+    ];
+    mockBoardFetch(createBlankBoard(), boards).mockImplementation(
+      (input, init) => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof Request
+              ? input.url
+              : String(input);
+        if (url === "/api/boards") {
+          return Promise.resolve(Response.json({ boards }));
+        }
+        if (url === "/api/board/board-b") {
+          return Promise.resolve(Response.json(secondBoard));
+        }
+        if (url === "/api/board/main") {
+          return Promise.resolve(Response.json(createBlankBoard()));
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+    );
+
+    renderBoard();
+
+    await screen.findByLabelText("Board");
+    const initialSocket = currentWebSocket();
+    expect(initialSocket.url).toContain("/ws/main");
+
+    fireEvent.change(screen.getByLabelText("Switch board"), {
+      target: { value: "board-b" },
+    });
+
+    await waitFor(() => {
+      expect(initialSocket.close).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(currentWebSocket().url).toContain("/ws/board-b");
+    });
+    await waitFor(() => {
+      expect(fakeContext.fillStyle).toBe("#E50000");
+    });
+  });
+
+  it("creates a board and switches to it", async () => {
+    const fetchMock = mockBoardFetch();
+    renderBoard();
+
+    await screen.findByLabelText("Board");
+    fireEvent.change(screen.getByLabelText("New board name"), {
+      target: { value: "Team sketch" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create board" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/boards", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Team sketch" }),
+      });
+    });
+    await waitFor(() => {
+      expect(currentWebSocket().url).toContain("/ws/board-b");
     });
   });
 });

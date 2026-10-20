@@ -10,7 +10,7 @@ type Env = {
   BOARD: DurableObjectNamespace<BoardDO>;
 };
 
-/** The single Durable Object that holds the Board. */
+/** Durable Object that holds one Board grid. */
 export class BoardDO extends DurableObject<Env> {
   private board = createBlankBoard();
 

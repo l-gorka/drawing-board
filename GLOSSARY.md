@@ -1,11 +1,11 @@
 # Drawing Board
 
-A real-time multiplayer pixel board: anyone who opens it can paint on a single shared grid and see everyone else's changes instantly.
+A real-time multiplayer pixel board: anyone who opens it can paint on a shared grid and see everyone else's changes on that board instantly. The app may host multiple independent Boards.
 
 ## Language
 
 **Board**:
-The single shared 32×32 grid of Cells that all participants draw on. It is the source of truth held by the server.
+A 32×32 grid of Cells that participants draw on together. Each Board has a stable id and display name; Draws on one Board do not affect another. The server holds the source of truth for each Board in its own Durable Object.
 _Avoid_: Canvas (for the data), grid, map
 
 **Cell**:
