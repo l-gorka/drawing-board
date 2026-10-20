@@ -21,31 +21,44 @@ function applyMessage(board: Board, message: BoardMessage): Board {
   }
 }
 
-export function useLiveBoard() {
+export function useLiveBoard(boardId: string) {
   const [board, setBoard] = useState<Board | null>(null);
   const [connectionGeneration, setConnectionGeneration] = useState(0);
   const connectionSequence = useRef(0);
   const activeConnectionGeneration = useRef<number | null>(null);
+  const activeBoardId = useRef(boardId);
   const hydrated = useRef(false);
   const bufferedMessages = useRef<BoardMessage[]>([]);
   const socket = useRef<ReconnectingWebSocket | null>(null);
   const lastResumeAt = useRef(0);
 
   const { data: snapshot, isError } = useQuery({
-    queryKey: ["board", connectionGeneration],
-    queryFn: fetchBoard,
+    queryKey: ["board", boardId, connectionGeneration],
+    queryFn: () => fetchBoard(boardId),
     enabled: connectionGeneration > 0,
   });
 
   useEffect(() => {
-    const webSocketUrl = new URL("/ws", window.location.href);
-    webSocketUrl.protocol = webSocketUrl.protocol === "https:" ? "wss:" : "ws:";
+    activeBoardId.current = boardId;
+    setBoard(null);
+    hydrated.current = false;
+    bufferedMessages.current = [];
+    activeConnectionGeneration.current = null;
+    connectionSequence.current = 0;
+    setConnectionGeneration(0);
+
+    const webSocketUrl = new URL(
+      `/ws/${encodeURIComponent(boardId)}`,
+      window.location.href,
+    );
+    webSocketUrl.protocol =
+      webSocketUrl.protocol === "https:" ? "wss:" : "ws:";
     const webSocket = new ReconnectingWebSocket(webSocketUrl.toString());
     socket.current = webSocket;
     let isActive = true;
 
     webSocket.addEventListener("open", () => {
-      if (!isActive) {
+      if (!isActive || activeBoardId.current !== boardId) {
         return;
       }
 
@@ -57,7 +70,7 @@ export function useLiveBoard() {
     });
 
     webSocket.addEventListener("message", (event) => {
-      if (!isActive) {
+      if (!isActive || activeBoardId.current !== boardId) {
         return;
       }
 
@@ -77,7 +90,7 @@ export function useLiveBoard() {
     });
 
     webSocket.addEventListener("close", () => {
-      if (!isActive) {
+      if (!isActive || activeBoardId.current !== boardId) {
         return;
       }
 
@@ -87,7 +100,11 @@ export function useLiveBoard() {
     });
 
     const resumeBoard = () => {
-      if (!isActive || document.visibilityState !== "visible") {
+      if (
+        !isActive ||
+        activeBoardId.current !== boardId ||
+        document.visibilityState !== "visible"
+      ) {
         return;
       }
 
@@ -111,12 +128,13 @@ export function useLiveBoard() {
         socket.current = null;
       }
     };
-  }, []);
+  }, [boardId]);
 
   useEffect(() => {
     if (
       !snapshot ||
       hydrated.current ||
+      activeBoardId.current !== boardId ||
       activeConnectionGeneration.current !== connectionGeneration
     ) {
       return;
@@ -129,7 +147,7 @@ export function useLiveBoard() {
     bufferedMessages.current = [];
     hydrated.current = true;
     setBoard(hydratedBoard);
-  }, [connectionGeneration, snapshot]);
+  }, [boardId, connectionGeneration, snapshot]);
 
   const draw = useCallback((message: DrawMessage) => {
     setBoard((currentBoard) =>

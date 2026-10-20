@@ -6,6 +6,16 @@ export {
   drawCell,
 } from "./board";
 export type {
+  BoardSummary,
+  CreateBoardRequest,
+  ListBoardsResponse,
+} from "./boards-api";
+export {
+  DEFAULT_BOARD_ID,
+  isBoardId,
+  parseCreateBoardRequest,
+} from "./boards-api";
+export type {
   BoardMessage,
   Color,
   DrawMessage,
